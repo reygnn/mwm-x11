@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Mwm (Motif, X11)
+Comment=Motif-style window manager for X11
+Exec=@BINDIR@/mwm
+Type=Application
+DesktopNames=mwm
