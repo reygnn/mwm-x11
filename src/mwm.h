@@ -16,6 +16,7 @@
 #include <X11/Xft/Xft.h>
 
 #define LENGTH(a) (sizeof(a) / sizeof((a)[0]))
+#define DOUBLE_CLICK_MS 400
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -350,6 +351,10 @@ struct menu {
 	int x, y, width, height;
 	int item_y[MENU_MAX_ITEMS], item_h[MENU_MAX_ITEMS];
 	Time opened;
+	int open_x, open_y;  /* pointer when posted */
+	bool moved;          /* pointer moved since then */
+	bool pressed;        /* a button went down in the menu since then */
+	bool from_button;    /* posted by the frame's menu button */
 };
 
 /* ---- global state ------------------------------------------------------- */
@@ -414,6 +419,7 @@ struct wm {
 	struct rect grab_orig; /* client geometry at grab start, for Escape */
 	unsigned grab_edges;
 	bool grab_until_click; /* move/size started from menu or keyboard */
+	unsigned grab_button;  /* GRAB_BUTTON: the button held down */
 	int grab_px, grab_py;  /* pointer at grab start */
 	int grab_last_x, grab_last_y;
 	bool grab_detached;    /* moved past the drag threshold */

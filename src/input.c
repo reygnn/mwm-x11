@@ -12,7 +12,6 @@
 #include <X11/keysym.h>
 #include "mwm.h"
 
-#define DOUBLE_CLICK_MS 400
 #define DRAG_THRESHOLD 8
 
 struct key {
@@ -240,10 +239,20 @@ void end_grab(void)
 		bool h = c->maxed_h && c->x == o.x && c->w == o.w;
 		if (v != c->maxed_v || h != c->maxed_h ||
 				(c->snap != SNAP_NONE && changed)) {
+			/* Only the axes that are free now take the new
+			 * geometry; a still maximized one keeps what it
+			 * restores to. */
 			c->snap = SNAP_NONE;
 			c->maxed_v = v;
 			c->maxed_h = h;
-			c->saved = (struct rect){ c->x, c->y, c->w, c->h };
+			if (!h) {
+				c->saved.x = c->x;
+				c->saved.w = c->w;
+			}
+			if (!v) {
+				c->saved.y = c->y;
+				c->saved.h = c->h;
+			}
 			frame_render(c);
 			ewmh_set_state(c);
 		}
@@ -323,6 +332,12 @@ static void process_resize(int px, int py)
 		frame_title(c) ? 3 * theme.title_height + 24 : 16);
 	int ch = MAX(bottom - top - frame_extra_h(c), 8);
 	client_apply_size_hints(c, &cw, &ch, true);
+	/* The axis not being dragged keeps its size: rounding it to the
+	 * client's increments would undo a full-height snap. */
+	if (!(edges & (EDGE_LEFT | EDGE_RIGHT)))
+		cw = wm.grab_orig.w;
+	if (!(edges & (EDGE_TOP | EDGE_BOTTOM)))
+		ch = wm.grab_orig.h;
 	int w = cw + frame_extra_w(c), h = ch + frame_extra_h(c);
 	if (edges & EDGE_LEFT)
 		left = right - w;
@@ -427,13 +442,11 @@ static void press_frame(struct client *c, XButtonEvent *e)
 		}
 		return;
 	case PART_MENU_BUTTON:
-		if (is_double_click(c, part, e->time)) {
-			menu_close();
-			client_close(c);
-		} else {
-			menu_open_window(c, c->x + frame_border(c),
-				c->y + frame_border(c) + frame_title(c));
-		}
+		/* The menu takes the grab; its own press handling sees the
+		 * second click of a double click and closes the window. */
+		menu_open_window(c, c->x + frame_border(c),
+			c->y + frame_border(c) + frame_title(c));
+		wm.menu.from_button = true;
 		return;
 	case PART_MINIMIZE_BUTTON:
 	case PART_MAXIMIZE_BUTTON:
@@ -445,6 +458,7 @@ static void press_frame(struct client *c, XButtonEvent *e)
 		c->pressed_inside = true;
 		wm.grabbed = c;
 		wm.grab = GRAB_BUTTON;
+		wm.grab_button = e->button;
 		frame_render(c);
 		return;
 	case PART_RESIZE:
@@ -519,6 +533,8 @@ void handle_button_release(XButtonEvent *e)
 		return;
 	case GRAB_BUTTON: {
 		struct client *c = wm.grabbed;
+		if (e->button != wm.grab_button)
+			return;
 		enum frame_part part = c->pressed;
 		bool inside = c->pressed_inside;
 		c->pressed = PART_NONE;
@@ -641,9 +657,10 @@ void handle_key_press(XKeyEvent *e)
 	if (wm.grab == GRAB_MENU) {
 		char buf[8];
 		KeySym typed;
+		/* Mnemonics come from the typed character, which follows the
+		 * layout and Shift; everything else from the keysym. */
 		if (XLookupString(e, buf, sizeof(buf), &typed, NULL) == 1 &&
-				typed != XK_Return && typed != XK_space &&
-				typed != XK_Escape)
+				typed > XK_space && typed <= XK_asciitilde)
 			sym = (unsigned char)buf[0];
 		menu_key(sym);
 		return;

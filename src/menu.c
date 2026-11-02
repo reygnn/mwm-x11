@@ -134,6 +134,12 @@ static void open_at(int x, int y)
 	m->y = MAX(y, a.y);
 	m->armed = -1;
 	m->opened = wm.time;
+	m->moved = m->pressed = false;
+	Window rw, cw;
+	int wx, wy;
+	unsigned mask;
+	XQueryPointer(wm.dpy, wm.root, &rw, &cw, &m->open_x, &m->open_y,
+		&wx, &wy, &mask);
 
 	if (!m->win) {
 		XSetWindowAttributes wa = {
@@ -171,6 +177,7 @@ void menu_open_window(struct client *c, int x, int y)
 	m->title = NULL;
 	m->n_items = 0;
 	m->target = c;
+	m->from_button = false;
 	bool maxed = c->maxed_v || c->maxed_h;
 	bool normal = !c->minimized && !maxed && !c->fullscreen &&
 		c->snap == SNAP_NONE;
@@ -197,6 +204,7 @@ void menu_open_root(int x, int y)
 	m->title = "Root Menu";
 	m->n_items = 0;
 	m->target = NULL;
+	m->from_button = false;
 	add(m, "New Window", 'N', NULL, ACT_NEW_WINDOW, true);
 	add(m, "Shuffle Up", 'U', NULL, ACT_SHUFFLE_UP, true);
 	add(m, "Shuffle Down", 'D', NULL, ACT_SHUFFLE_DOWN, true);
@@ -214,6 +222,7 @@ static void open_confirm(const char *title, enum action action, int x, int y)
 	m->title = title;
 	m->n_items = 0;
 	m->target = NULL;
+	m->from_button = false;
 	add(m, "OK", 'O', NULL, action, true);
 	add(m, "Cancel", 'C', NULL, ACT_NONE, true);
 	open_at(x, y);
@@ -274,7 +283,10 @@ static void activate(int idx)
 
 void menu_motion(int x, int y)
 {
-	int idx = item_at(&wm.menu, x, y);
+	struct menu *m = &wm.menu;
+	if (abs(x - m->open_x) > 4 || abs(y - m->open_y) > 4)
+		m->moved = true;
+	int idx = item_at(m, x, y);
 	arm(idx < 0 ? -1 : idx);
 }
 
@@ -283,13 +295,28 @@ void menu_button(int x, int y, bool pressed, Time time)
 	struct menu *m = &wm.menu;
 	int idx = item_at(m, x, y);
 	if (pressed) {
-		if (idx == -2)
-			menu_close();
-		else
+		if (idx != -2) {
+			m->pressed = true;
 			arm(idx);
+			return;
+		}
+		/* mwm: double-clicking the menu button closes the window. */
+		struct client *t = m->target;
+		unsigned edges;
+		bool close = m->from_button && t &&
+			time - m->opened < DOUBLE_CLICK_MS &&
+			frame_hit(t, x - t->x, y - t->y, &edges) ==
+			PART_MENU_BUTTON;
+		menu_close();
+		if (close)
+			client_close(t);
 		return;
 	}
-	if (idx >= 0)
+	/* The release of the click that posted the menu must not pick the
+	 * item that happens to lie under the pointer, e.g. when the menu
+	 * was pushed up from the bottom edge; only a drag or a click in
+	 * the menu selects. */
+	if (idx >= 0 && (m->moved || m->pressed))
 		activate(idx);
 	else if (idx == -2 && time - m->opened > DRAG_RELEASE_MS)
 		menu_close(); /* press-drag-release that ended outside */
