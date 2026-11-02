@@ -6,7 +6,7 @@ minimize/maximize buttons, desktop icons, and mwm's menus, key bindings and
 move/size feedback box. It is the X11 counterpart of
 [mwc](https://github.com/reygnn/mwc), the Wayland compositor with the same look.
 
-Plain Xlib + Xft + XRandR, with no toolkit, no cairo and no config file.
+Plain Xlib + Xft + XRandR, with no toolkit and no cairo.
 
 ## Standards
 
@@ -88,7 +88,40 @@ Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit.
 During a keyboard move or resize, the arrow keys nudge the window (Shift
 for 1 px steps), Return confirms and Escape cancels.
 
-## Configuration (environment)
+## Configuration
+
+`~/.config/mwm/mwmrc` uses Motif resource syntax. Each program can get its
+own frame colour, matched by `WM_CLASS` (instance or class name, ignoring
+case; run `xprop WM_CLASS` and click the window to see it):
+
+```
+! ~/.config/mwm/mwmrc
+Mwm*XTerm*activeBackground:    #8a0303
+Mwm*firefox*activeBackground:  gold
+
+! global defaults
+Mwm*activeBackground:          #7387ad
+Mwm*background:                #aeb2c3
+Mwm*fontList:                  Sans:bold:size=10
+```
+
+| Resource | Meaning |
+|---|---|
+| `activeBackground` | frame colour while focused |
+| `background` | frame colour while unfocused (globally: also menus and icons) |
+| `activeForeground`, `foreground` | title text; default is black or white, whichever contrasts |
+| `fontList` | fontconfig pattern for titles and menus (global only) |
+| `rootBackground` | desktop colour (global only) |
+
+A program with its own `activeBackground` keeps its colour when unfocused,
+in a paler shade (mixed with the global `background`), and so does its
+desktop icon. Set `Mwm*Name*background` to choose the unfocused colour
+yourself. Colours are anything `XParseColor` accepts: `#rrggbb`, names like
+`gold` or `firebrick`, `rgb:rr/gg/bb`. Lines starting with `!` or `#` are
+comments, and later lines win. The file is read at startup and on
+"Restart..." in the root menu.
+
+The environment overrides the global entries:
 
 | Variable          | Default             |                                   |
 |-------------------|---------------------|-----------------------------------|

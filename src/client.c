@@ -1060,6 +1060,7 @@ void client_manage(Window w, bool startup)
 
 	client_update_title(c);
 	client_update_icon_name(c);
+	config_client_shades(c);
 	client_update_size_hints(c);
 	client_update_wm_hints(c);
 	client_update_protocols(c);
@@ -1337,6 +1338,11 @@ void client_property_notify(XPropertyEvent *e)
 			icon_render(c);
 	} else if (a == XA_WM_ICON_NAME || a == atoms[NET_WM_ICON_NAME]) {
 		client_update_icon_name(c);
+		if (c->minimized && c->icon_win)
+			icon_render(c);
+	} else if (a == XA_WM_CLASS) {
+		config_client_shades(c);
+		frame_render(c);
 		if (c->minimized && c->icon_win)
 			icon_render(c);
 	} else if (a == atoms[NET_WM_ICON]) {

@@ -17,8 +17,8 @@ CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit \
 	$(shell $(PKG_CONFIG) --cflags $(PKGS))
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS))
 
-SRC = src/main.c src/client.c src/ewmh.c src/frame.c src/menu.c \
-	src/input.c src/draw.c
+SRC = src/main.c src/client.c src/config.c src/ewmh.c src/frame.c \
+	src/menu.c src/input.c src/draw.c
 OBJ = $(SRC:src/%.c=build/%.o)
 
 all: mwm

@@ -117,7 +117,8 @@ void frame_render(struct client *c)
 	const int bv = MIN(theme.bevel, B);
 	const bool full = B == theme.border;
 	const bool maximized = c->maxed_v && c->maxed_h;
-	const struct shade *s = c == wm.focus ? &theme.active : &theme.inactive;
+	const struct shade *s = c == wm.focus ? c->active_shade :
+		c->inactive_shade;
 
 	struct canvas cv;
 	canvas_begin(&cv, W, H);
@@ -215,7 +216,7 @@ enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges)
  * visual is not TrueColor), so the caller can draw the default image.
  */
 static bool draw_net_icon(struct canvas *cv, struct client *c, int bx, int by,
-	int bw, int bh)
+	int bw, int bh, uint32_t bg)
 {
 	if (wm.visual->class != TrueColor)
 		return false;
@@ -258,7 +259,6 @@ static bool draw_net_icon(struct canvas *cv, struct client *c, int bx, int by,
 		return false;
 	}
 	img->data = malloc((size_t)img->bytes_per_line * dh);
-	uint32_t bg = theme.inactive.bg_rgb;
 	for (int y = 0; y < dh; y++) {
 		for (int x = 0; x < dw; x++) {
 			uint32_t p = best[(unsigned long)(y / scale) * iw +
@@ -281,7 +281,8 @@ static bool draw_net_icon(struct canvas *cv, struct client *c, int bx, int by,
 
 void icon_render(struct client *c)
 {
-	const struct shade *s = &theme.inactive;
+	/* Icons wear the client's colours like its frame does. */
+	const struct shade *s = c->inactive_shade;
 	int img_h = ICON_H - LABEL_H;
 	struct canvas cv;
 	canvas_begin(&cv, ICON_W, ICON_H);
@@ -290,12 +291,13 @@ void icon_render(struct client *c)
 	draw_bevel(&cv, 0, 0, ICON_W, img_h, 2, s, false);
 	draw_bevel(&cv, 0, img_h, ICON_W, LABEL_H, 2, s, false);
 
-	if (!draw_net_icon(&cv, c, 6, 4, ICON_W - 12, img_h - 8)) {
+	if (!draw_net_icon(&cv, c, 6, 4, ICON_W - 12, img_h - 8,
+			s->bg_rgb)) {
 		/* Default image: a miniature Motif window in a sunken well. */
 		int wx = 6, wy = 6, ww = ICON_W - 12, wh = img_h - 12;
 		fill_rect(&cv, theme.root, wx, wy, ww, wh);
 		draw_bevel(&cv, wx, wy, ww, wh, 1, s, true);
-		const struct shade *a = &theme.active;
+		const struct shade *a = c->active_shade;
 		int mx = wx + 8, my = wy + 6, mw = ww - 16, mh = wh - 12;
 		fill_rect(&cv, a->bg, mx, my, mw, mh);
 		draw_bevel(&cv, mx, my, mw, mh, 1, a, false);

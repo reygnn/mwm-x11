@@ -10,23 +10,28 @@
 
 struct theme theme;
 
-static uint32_t parse_env_color(const char *var, uint32_t fallback)
+/* Environment first, then mwmrc, then the built-in default. */
+static uint32_t setting_color(const char *env, const char *resource,
+	uint32_t fallback)
 {
-	const char *s = getenv(var);
+	uint32_t rgb;
+	const char *s = getenv(env);
+	if (s && *s) {
+		if (config_color(s, &rgb))
+			return rgb;
+		wm_log("ignoring %s=%s, not a colour", env, s);
+	}
+	s = config_get(resource);
 	if (s) {
-		if (*s == '#')
-			s++;
-		char *end;
-		unsigned long v = strtoul(s, &end, 16);
-		if (*end == '\0' && end - s == 6)
-			return (uint32_t)v;
-		wm_log("ignoring %s=%s, expected #rrggbb", var, getenv(var));
+		if (config_color(s, &rgb))
+			return rgb;
+		wm_log("ignoring Mwm*%s: %s, not a colour", resource, s);
 	}
 	return fallback;
 }
 
 /* Move each channel of rgb the fraction f of the way towards `to`. */
-static uint32_t mix(uint32_t rgb, uint32_t to, float f)
+uint32_t color_mix(uint32_t rgb, uint32_t to, float f)
 {
 	uint32_t out = 0;
 	for (int shift = 0; shift <= 16; shift += 8) {
@@ -34,6 +39,13 @@ static uint32_t mix(uint32_t rgb, uint32_t to, float f)
 		out |= (uint32_t)(c + (t - c) * f + 0.5f) << shift;
 	}
 	return out;
+}
+
+/* Black or white, whichever reads better on bg. */
+static uint32_t contrast(uint32_t bg)
+{
+	unsigned r = (bg >> 16) & 0xff, g = (bg >> 8) & 0xff, b = bg & 0xff;
+	return 299 * r + 587 * g + 114 * b > 140000 ? 0x000000 : 0xffffff;
 }
 
 static unsigned long alloc_pixel(uint32_t rgb)
@@ -67,26 +79,61 @@ static void shade_from(struct shade *s, uint32_t bg, uint32_t fg)
 {
 	s->bg_rgb = bg;
 	s->bg = alloc_pixel(bg);
-	s->top = alloc_pixel(mix(bg, 0xffffff, 0.55f));
-	s->bottom = alloc_pixel(mix(bg, 0x000000, 0.5f));
+	s->top = alloc_pixel(color_mix(bg, 0xffffff, 0.55f));
+	s->bottom = alloc_pixel(color_mix(bg, 0x000000, 0.5f));
 	alloc_xft(&s->fg, fg);
+}
+
+/* Shades for per-client colours, allocated once and shared. */
+struct cached_shade {
+	struct cached_shade *next;
+	uint32_t fg;
+	struct shade s;
+};
+
+static struct cached_shade *shade_cache;
+
+const struct shade *shade_get(uint32_t bg, int64_t fg)
+{
+	uint32_t f = fg < 0 ? contrast(bg) : (uint32_t)fg;
+	for (struct cached_shade *c = shade_cache; c; c = c->next) {
+		if (c->s.bg_rgb == bg && c->fg == f)
+			return &c->s;
+	}
+	struct cached_shade *c = calloc(1, sizeof(*c));
+	c->fg = f;
+	shade_from(&c->s, bg, f);
+	c->next = shade_cache;
+	shade_cache = c;
+	return &c->s;
 }
 
 void theme_init(void)
 {
 	/* Defaults follow the Motif 2.x look: #aeb2c3 grey-blue background,
 	 * a stronger blue for the window that has the focus. Each one can be
-	 * overridden through the environment, e.g. MWM_ACTIVE=#b24d7a. */
-	uint32_t inactive = parse_env_color("MWM_INACTIVE", 0xaeb2c3);
-	uint32_t active = parse_env_color("MWM_ACTIVE", 0x7387ad);
-	uint32_t root = parse_env_color("MWM_ROOT", 0x5b7792);
+	 * set in mwmrc or overridden through the environment, e.g.
+	 * MWM_ACTIVE=#b24d7a. Title text picks black or white unless set. */
+	uint32_t inactive = setting_color("MWM_INACTIVE", "background",
+		0xaeb2c3);
+	uint32_t active = setting_color("MWM_ACTIVE", "activeBackground",
+		0x7387ad);
+	uint32_t root = setting_color("MWM_ROOT", "rootBackground", 0x5b7792);
+	uint32_t fg;
 
-	shade_from(&theme.inactive, inactive, 0x000000);
-	shade_from(&theme.active, active, 0xffffff);
-	alloc_xft(&theme.dim, mix(inactive, mix(inactive, 0, 0.5f), 0.5f));
+	shade_from(&theme.inactive, inactive,
+		config_color(config_get("foreground"), &fg) ? fg :
+		contrast(inactive));
+	shade_from(&theme.active, active,
+		config_color(config_get("activeForeground"), &fg) ? fg :
+		contrast(active));
+	alloc_xft(&theme.dim, color_mix(inactive,
+		color_mix(inactive, 0, 0.5f), 0.5f));
 	theme.root = alloc_pixel(root);
 
 	const char *font = getenv("MWM_FONT");
+	if (!font || !*font)
+		font = config_get("fontList");
 	if (!font || !*font)
 		font = "Sans:bold:size=10";
 	theme.font = XftFontOpenName(wm.dpy, wm.screen, font);

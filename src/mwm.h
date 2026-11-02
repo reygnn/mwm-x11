@@ -157,6 +157,9 @@ int text_width(const char *text, int len);
 void draw_text(struct canvas *cv, const char *text, XftColor *fg,
 	int x, int y, int w, int h, bool center);
 unsigned long truecolor_pixel(uint32_t rgb);
+uint32_t color_mix(uint32_t rgb, uint32_t to, float f);
+/* Shared shade for a background; fg < 0 picks black or white. */
+const struct shade *shade_get(uint32_t bg, int64_t fg);
 
 /* ---- clients ------------------------------------------------------------ */
 
@@ -237,6 +240,10 @@ struct client {
 
 	char *title;
 	char *icon_name;
+
+	/* Frame colours, from mwmrc by WM_CLASS or the theme defaults. */
+	const struct shade *active_shade;
+	const struct shade *inactive_shade;
 
 	/* WM_NORMAL_HINTS */
 	int base_w, base_h, min_w, min_h, max_w, max_h, inc_w, inc_h;
@@ -449,6 +456,13 @@ void monitors_update(void);
 struct rect monitor_rect_at(int x, int y);
 struct rect monitor_usable_at(int x, int y);
 struct rect client_box(struct client *c);
+
+/* ---- config.c ----------------------------------------------------------- */
+
+void config_load(void);
+const char *config_get(const char *resource);
+bool config_color(const char *value, uint32_t *rgb);
+void config_client_shades(struct client *c);
 
 /* ---- ewmh.c ------------------------------------------------------------- */
 

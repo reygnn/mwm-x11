@@ -176,6 +176,7 @@ static void setup(bool replace)
 			RRCrtcChangeNotifyMask | RROutputChangeNotifyMask);
 	monitors_update();
 
+	config_load();
 	theme_init();
 	input_init();
 	ewmh_init();
