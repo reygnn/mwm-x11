@@ -355,6 +355,10 @@ enum action {
 	ACT_SNAP_UP,
 	ACT_SNAP_DOWN,
 	ACT_TOGGLE_TILING,
+	ACT_EDGE_LEFT,
+	ACT_EDGE_RIGHT,
+	ACT_EDGE_UP,
+	ACT_EDGE_DOWN,
 };
 
 struct menu_item {
@@ -501,6 +505,7 @@ void client_set_fullscreen(struct client *c, bool fs);
 void client_snap(struct client *c, enum snap s, int px, int py);
 void client_apply_state(struct client *c);
 void client_set_tiled(struct client *c, bool on, bool apply);
+void client_move_to_edge(struct client *c, enum action dir);
 struct client *transient_parent(struct client *c);
 void client_cycle(bool backwards);
 void client_grab_buttons(struct client *c, bool focused);

@@ -147,7 +147,9 @@ Alt+Tab / Alt+Shift+Tab (or Alt+Esc) cycle · Alt+Space or Shift+Esc window menu
 Alt+F3 lower · Alt+F4 close · Alt+F5 restore · Alt+F7 move · Alt+F8 size ·
 Alt+F9 minimize · Alt+F10 maximize · Alt+F11 fullscreen ·
 Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit ·
-Super+arrows snap (see above) · Super+T tiling on/off.
+Super+arrows snap (see above) · Super+Shift+arrows push a floating window
+against that edge of the work area (two in a row: a corner) ·
+Super+T tiling on/off.
 
 During a keyboard move or resize, the arrow keys nudge the window (Shift
 for 1 px steps), Return confirms and Escape cancels.

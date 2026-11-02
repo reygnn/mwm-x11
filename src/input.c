@@ -45,6 +45,10 @@ static const struct key keys[] = {
 	{ Mod4Mask, XK_Up, ACT_SNAP_UP },
 	{ Mod4Mask, XK_Down, ACT_SNAP_DOWN },
 	{ Mod4Mask, XK_t, ACT_TOGGLE_TILING },
+	{ Mod4Mask | ShiftMask, XK_Left, ACT_EDGE_LEFT },
+	{ Mod4Mask | ShiftMask, XK_Right, ACT_EDGE_RIGHT },
+	{ Mod4Mask | ShiftMask, XK_Up, ACT_EDGE_UP },
+	{ Mod4Mask | ShiftMask, XK_Down, ACT_EDGE_DOWN },
 };
 
 void spawn(const char *cmd)

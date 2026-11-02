@@ -3,6 +3,7 @@
 # a new window, tiling off, restart. Runs inside the container (see
 # run.sh): /repo (ro) = source, /out = results.
 cp -r /repo /b && cd /b && make clean >/dev/null && make -s CFLAGS="-O2 -g" || exit 1
+: > /out/geo.txt # appended to below
 export DISPLAY=:99
 Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
 sleep 1

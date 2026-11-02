@@ -511,6 +511,13 @@ void run_action(enum action action, struct client *c)
 	case ACT_SNAP_DOWN:
 		snap_step(c, action);
 		break;
+	case ACT_EDGE_LEFT:
+	case ACT_EDGE_RIGHT:
+	case ACT_EDGE_UP:
+	case ACT_EDGE_DOWN:
+		if (c)
+			client_move_to_edge(c, action);
+		break;
 	case ACT_RESTART:
 		wm.restart = true;
 		wm.running = false;

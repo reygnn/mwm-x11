@@ -768,6 +768,42 @@ void client_snap(struct client *c, enum snap s, int px, int py)
 	ewmh_set_state(c);
 }
 
+/* Super+Shift+arrow: push a floating window flush against that edge of
+ * the work area of its monitor; two in a row reach a corner. Only along
+ * an axis it is free in: not tiled, snapped or maximized that way. */
+void client_move_to_edge(struct client *c, enum action dir)
+{
+	if (c->minimized || c->fullscreen || c->tiled ||
+			c->snap != SNAP_NONE || !(c->funcs & FUNC_MOVE))
+		return;
+	bool horizontal = dir == ACT_EDGE_LEFT || dir == ACT_EDGE_RIGHT;
+	if (horizontal ? c->maxed_h : c->maxed_v)
+		return;
+	int cx, cy;
+	client_center(c, &cx, &cy);
+	struct rect a = monitor_usable_at(cx, cy), b = client_box(c);
+	int x = c->x, y = c->y;
+	/* A window larger than the area keeps its left or top edge in. */
+	switch (dir) {
+	case ACT_EDGE_LEFT:
+		x = a.x;
+		break;
+	case ACT_EDGE_RIGHT:
+		x = MAX(a.x, a.x + a.w - b.w);
+		break;
+	case ACT_EDGE_UP:
+		y = a.y;
+		break;
+	case ACT_EDGE_DOWN:
+		y = MAX(a.y, a.y + a.h - b.h);
+		break;
+	default:
+		return;
+	}
+	client_move(c, x, y);
+	save_free_axes(c); /* a later restore comes back here */
+}
+
 void client_set_fullscreen(struct client *c, bool fs)
 {
 	if (c->fullscreen == fs)
