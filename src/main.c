@@ -6,6 +6,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
+#include <fcntl.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -25,6 +26,7 @@ Atom atoms[ATOM_COUNT];
 
 static bool debug;
 static volatile sig_atomic_t got_signal;
+static int signal_pipe[2] = { -1, -1 }; /* wakes up select() */
 static Atom wm_selection;
 
 void wm_log(const char *fmt, ...)
@@ -55,6 +57,38 @@ static void die(const char *msg)
 	exit(1);
 }
 
+void *xmalloc(size_t n)
+{
+	void *p = malloc(n ? n : 1);
+	if (!p)
+		die("out of memory");
+	return p;
+}
+
+void *xcalloc(size_t n, size_t size)
+{
+	void *p = calloc(n ? n : 1, size ? size : 1);
+	if (!p)
+		die("out of memory");
+	return p;
+}
+
+void *xrealloc(void *p, size_t n)
+{
+	p = realloc(p, n ? n : 1);
+	if (!p)
+		die("out of memory");
+	return p;
+}
+
+char *xstrdup(const char *s)
+{
+	char *p = strdup(s);
+	if (!p)
+		die("out of memory");
+	return p;
+}
+
 /* Windows disappear all the time; errors about them are expected. */
 static int xerror(Display *dpy, XErrorEvent *e)
 {
@@ -78,7 +112,29 @@ static int xerror_startup(Display *dpy, XErrorEvent *e)
 
 static void on_signal(int sig)
 {
+	int saved = errno;
 	got_signal = sig;
+	if (write(signal_pipe[1], "", 1) < 0) {
+		/* full pipe: a wake-up is pending anyway */
+	}
+	errno = saved;
+}
+
+static void setup_signals(void)
+{
+	if (pipe(signal_pipe) < 0) {
+		perror("mwm: pipe");
+		exit(1);
+	}
+	for (int i = 0; i < 2; i++) {
+		fcntl(signal_pipe[i], F_SETFL, O_NONBLOCK);
+		fcntl(signal_pipe[i], F_SETFD, FD_CLOEXEC);
+	}
+	struct sigaction sa = { .sa_handler = on_signal };
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
 }
 
 /* ---- startup ------------------------------------------------------------ */
@@ -147,6 +203,9 @@ static void setup(bool replace)
 	wm.depth = DefaultDepth(wm.dpy, wm.screen);
 	wm.cmap = DefaultColormap(wm.dpy, wm.screen);
 	wm.gc = XCreateGC(wm.dpy, wm.root, 0, NULL);
+	/* From here on windows may vanish under us, e.g. the old window
+	 * manager's selection owner while we replace it. */
+	XSetErrorHandler(xerror);
 
 	char *names[ATOM_COUNT] = {
 #define X(id, name) name,
@@ -427,11 +486,18 @@ static void run(void)
 		}
 		if (!wm.running)
 			break;
+		/* A signal arriving after the check above still ends the
+		 * wait: its handler writes to the pipe. */
 		fd_set fds;
 		FD_ZERO(&fds);
 		FD_SET(fd, &fds);
-		if (select(fd + 1, &fds, NULL, NULL, NULL) < 0 && errno != EINTR)
+		FD_SET(signal_pipe[0], &fds);
+		if (select(MAX(fd, signal_pipe[0]) + 1, &fds, NULL, NULL,
+				NULL) < 0 && errno != EINTR)
 			die("select failed");
+		char buf[16];
+		while (read(signal_pipe[0], buf, sizeof(buf)) > 0)
+			;
 	}
 }
 
@@ -442,7 +508,7 @@ static bool in_path(const char *prog)
 	const char *path = getenv("PATH");
 	if (!path)
 		return false;
-	char *dirs = strdup(path), *save = NULL;
+	char *dirs = xstrdup(path), *save = NULL;
 	bool found = false;
 	for (char *d = strtok_r(dirs, ":", &save); d && !found;
 			d = strtok_r(NULL, ":", &save)) {
@@ -530,12 +596,7 @@ int main(int argc, char *argv[])
 	if (!(wm.dpy = XOpenDisplay(NULL)))
 		die("cannot open display");
 
-	struct sigaction sa = { .sa_handler = on_signal };
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGHUP, &sa, NULL);
-
+	setup_signals();
 	setup(replace);
 	wm.terminal = pick_terminal();
 	scan();
@@ -550,6 +611,15 @@ int main(int argc, char *argv[])
 		run_autostart(startup_cmd);
 
 	run();
+
+	/* Releasing keeps iconic windows unmapped for the next mwm; make
+	 * sure there will be one, or they would be lost. */
+	if (wm.restart && !(strchr(argv[0], '/') ? access(argv[0], X_OK) == 0 :
+			in_path(argv[0]))) {
+		wm_log("cannot restart: %s is not executable, quitting",
+			argv[0]);
+		wm.restart = false;
+	}
 
 	menu_close();
 	end_grab();

@@ -100,7 +100,7 @@ const struct shade *shade_get(uint32_t bg, int64_t fg)
 		if (c->s.bg_rgb == bg && c->fg == f)
 			return &c->s;
 	}
-	struct cached_shade *c = calloc(1, sizeof(*c));
+	struct cached_shade *c = xcalloc(1, sizeof(*c));
 	c->fg = f;
 	shade_from(&c->s, bg, f);
 	c->next = shade_cache;

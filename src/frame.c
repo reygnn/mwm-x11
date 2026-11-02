@@ -61,6 +61,20 @@ static void title_layout(struct client *c, struct title_layout *tl)
 	int B = frame_border(c), T = theme.title_height;
 	int left = B, right = B + c->w;
 	tl->menu_x = tl->min_x = tl->max_x = -1;
+
+	/* Drop the buttons a narrow window has no room for, minimize
+	 * first, so drawing and hit testing never see them overlap. */
+	static const unsigned order[] = {
+		DECOR_MINIMIZE, DECOR_MAXIMIZE, DECOR_MENU,
+	};
+	int n = !!(d & DECOR_MENU) + !!(d & DECOR_MINIMIZE) +
+		!!(d & DECOR_MAXIMIZE);
+	for (size_t i = 0; i < LENGTH(order) && n * T > c->w; i++) {
+		if (d & order[i]) {
+			d &= ~order[i];
+			n--;
+		}
+	}
 	if (d & DECOR_MENU) {
 		tl->menu_x = left;
 		left += T;
@@ -259,6 +273,11 @@ static bool draw_net_icon(struct canvas *cv, struct client *c, int bx, int by,
 		return false;
 	}
 	img->data = malloc((size_t)img->bytes_per_line * dh);
+	if (!img->data) {
+		XDestroyImage(img);
+		XFree(data);
+		return false;
+	}
 	for (int y = 0; y < dh; y++) {
 		for (int x = 0; x < dw; x++) {
 			uint32_t p = best[(unsigned long)(y / scale) * iw +

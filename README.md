@@ -102,7 +102,7 @@ maximized window back to normal, and from a normal window to its icon.
 
 ## Keys (mwm defaults)
 
-Alt+Tab / Alt+Shift+Tab cycle · Alt+Space or Shift+Esc window menu ·
+Alt+Tab / Alt+Shift+Tab (or Alt+Esc) cycle · Alt+Space or Shift+Esc window menu ·
 Alt+F3 lower · Alt+F4 close · Alt+F5 restore · Alt+F7 move · Alt+F8 size ·
 Alt+F9 minimize · Alt+F10 maximize · Alt+F11 fullscreen ·
 Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit ·

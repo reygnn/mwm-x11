@@ -42,7 +42,7 @@ static void list_insert(struct client *c, int at)
 {
 	if (wm.n_clients == wm.cap_clients) {
 		wm.cap_clients = wm.cap_clients ? wm.cap_clients * 2 : 32;
-		wm.clients = realloc(wm.clients,
+		wm.clients = xrealloc(wm.clients,
 			sizeof(*wm.clients) * wm.cap_clients);
 	}
 	at = MAX(0, MIN(at, wm.n_clients));
@@ -649,6 +649,19 @@ void client_apply_state(struct client *c)
 	apply_state_geometry_at(c, cx, cy);
 }
 
+/* The work area changed: windows that fill it follow. */
+static void struts_changed(void)
+{
+	ewmh_update_workarea();
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *c = wm.clients[i];
+		if (!c->minimized && !c->fullscreen && (c->snap != SNAP_NONE ||
+				c->maxed_v || c->maxed_h))
+			client_apply_state(c);
+	}
+	icons_arrange();
+}
+
 /* Remember the current geometry of the axes that are not maximized.
  * Snapped windows keep the geometry from before they snapped. */
 static void save_free_axes(struct client *c)
@@ -742,8 +755,9 @@ static enum layer client_layer(struct client *c)
 /* Push the stacking order of wm.clients, by layer, to the server. */
 void restack(void)
 {
-	Window *wins = malloc(sizeof(*wins) * (2 * wm.n_clients + 2));
-	int n = 0;
+	Window *wins = xmalloc(sizeof(*wins) * (2 * wm.n_clients + 2));
+	Window *order = xmalloc(sizeof(*order) * (wm.n_clients + 1));
+	int n = 0, k = 0;
 	if (wm.menu.open)
 		wins[n++] = wm.menu.win;
 	for (int layer = LAYER_COUNT - 1; layer >= 0; layer--) {
@@ -755,12 +769,14 @@ void restack(void)
 					wins[n++] = c->icon_win;
 			} else if ((int)client_layer(c) == layer) {
 				wins[n++] = c->frame;
+				order[k++] = c->win;
 			}
 		}
 	}
 	XRestackWindows(wm.dpy, wins, n);
+	ewmh_update_stacking(order, k);
 	free(wins);
-	ewmh_update_stacking();
+	free(order);
 }
 
 void client_raise(struct client *c)
@@ -768,7 +784,7 @@ void client_raise(struct client *c)
 	list_remove(c);
 	list_insert(c, 0);
 	/* Transients stay above the window they belong to. */
-	struct client **kids = malloc(sizeof(*kids) * wm.n_clients);
+	struct client **kids = xmalloc(sizeof(*kids) * wm.n_clients);
 	int n = 0;
 	for (int i = wm.n_clients - 1; i >= 0; i--) {
 		if (is_transient_of(wm.clients[i], c))
@@ -1014,7 +1030,7 @@ void client_minimize(struct client *c)
 	icons_arrange();
 	XMapWindow(wm.dpy, c->icon_win);
 	if (c->has_strut)
-		ewmh_update_workarea();
+		struts_changed();
 	restack();
 	if (had_focus)
 		client_focus_next(c);
@@ -1031,7 +1047,7 @@ static void deiconify(struct client *c)
 			show(t);
 	}
 	if (c->has_strut)
-		ewmh_update_workarea();
+		struts_changed();
 }
 
 /* mwm's f.normalize: back from an icon, fullscreen or maximized state. */
@@ -1125,7 +1141,7 @@ void client_manage(Window w, bool startup)
 			wa.class == InputOnly || client_find(w))
 		return;
 
-	struct client *c = calloc(1, sizeof(*c));
+	struct client *c = xcalloc(1, sizeof(*c));
 	c->win = w;
 	c->serial = wm.next_serial++;
 	c->w = MAX(wa.width, 1);
@@ -1214,7 +1230,7 @@ void client_manage(Window w, bool startup)
 	ewmh_set_frame_extents(c);
 	ewmh_update_client_list();
 	if (c->has_strut)
-		ewmh_update_workarea();
+		struts_changed();
 
 	/* Requested states: geometry first, then decide on mapping. */
 	if (c->fullscreen) {
@@ -1312,7 +1328,7 @@ void client_unmanage(struct client *c, bool destroyed)
 	release(c, destroyed, false);
 	free(c);
 	if (had_strut)
-		ewmh_update_workarea();
+		struts_changed();
 	ewmh_update_client_list();
 	restack();
 	icons_arrange();
@@ -1398,10 +1414,22 @@ void client_configure_request(XConfigureRequestEvent *e)
 	}
 
 	if (e->value_mask & CWStackMode) {
-		if (e->detail == Above || e->detail == TopIf)
-			client_raise(c);
-		else if (e->detail == Below || e->detail == BottomIf)
+		struct client *sib = (e->value_mask & CWSibling) ?
+			client_find_win(e->above) : NULL;
+		if (sib && sib != c && (e->detail == Above ||
+				e->detail == Below)) {
+			/* Directly above or below a given window. */
+			list_remove(c);
+			int i = 0;
+			while (wm.clients[i] != sib)
+				i++;
+			list_insert(c, e->detail == Above ? i : i + 1);
+			restack();
+		} else if (e->detail == Below || e->detail == BottomIf) {
 			client_lower(c);
+		} else {
+			client_raise(c);
+		}
 	}
 }
 
@@ -1451,6 +1479,6 @@ void client_property_notify(XPropertyEvent *e)
 	} else if (a == atoms[NET_WM_STRUT] ||
 			a == atoms[NET_WM_STRUT_PARTIAL]) {
 		client_update_strut(c);
-		ewmh_update_workarea();
+		struts_changed();
 	}
 }

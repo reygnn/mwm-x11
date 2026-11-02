@@ -1,6 +1,7 @@
 # mwm - Motif-style window manager for X11
 
 PREFIX ?= /usr/local
+XSESSIONSDIR ?= /usr/share/xsessions
 PKG_CONFIG ?= pkg-config
 PKGS = x11 xext xft xrandr
 
@@ -36,14 +37,14 @@ mwm: $(OBJ)
 # Motif mwm in /usr/bin cannot shadow this one.
 install: mwm
 	install -Dm755 mwm $(DESTDIR)$(PREFIX)/bin/mwm
-	mkdir -p $(DESTDIR)/usr/share/xsessions
+	mkdir -p $(DESTDIR)$(XSESSIONSDIR)
 	sed 's|@BINDIR@|$(PREFIX)/bin|' data/mwm-x11.desktop.in \
-		> $(DESTDIR)/usr/share/xsessions/mwm-x11.desktop
-	chmod 644 $(DESTDIR)/usr/share/xsessions/mwm-x11.desktop
+		> $(DESTDIR)$(XSESSIONSDIR)/mwm-x11.desktop
+	chmod 644 $(DESTDIR)$(XSESSIONSDIR)/mwm-x11.desktop
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/mwm \
-		$(DESTDIR)/usr/share/xsessions/mwm-x11.desktop
+		$(DESTDIR)$(XSESSIONSDIR)/mwm-x11.desktop
 
 clean:
 	rm -rf build mwm

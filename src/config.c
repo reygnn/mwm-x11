@@ -59,11 +59,11 @@ static void add_rule(char *key, char *value, int line)
 			path, line);
 		return;
 	}
-	rules = realloc(rules, sizeof(*rules) * (n_rules + 1));
+	rules = xrealloc(rules, sizeof(*rules) * (n_rules + 1));
 	rules[n_rules++] = (struct rule){
-		.client = n == 3 ? strdup(parts[1]) : NULL,
-		.resource = strdup(parts[n - 1]),
-		.value = strdup(value),
+		.client = n == 3 ? xstrdup(parts[1]) : NULL,
+		.resource = xstrdup(parts[n - 1]),
+		.value = xstrdup(value),
 		.line = line,
 	};
 }
@@ -82,9 +82,10 @@ void config_load(void)
 	if (!f)
 		return;
 
-	char buf[1024];
+	char *buf = NULL;
+	size_t cap = 0;
 	int line = 0;
-	while (fgets(buf, sizeof(buf), f)) {
+	while (getline(&buf, &cap, f) != -1) {
 		line++;
 		char *s = trim(buf);
 		if (!*s || *s == '!' || *s == '#')
@@ -97,6 +98,7 @@ void config_load(void)
 		*colon = '\0';
 		add_rule(trim(s), trim(colon + 1), line);
 	}
+	free(buf);
 	fclose(f);
 	wm_debug("%s: %d rules", path, n_rules);
 }

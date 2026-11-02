@@ -23,6 +23,12 @@
 void wm_log(const char *fmt, ...);
 /* A current server timestamp (one round trip). */
 Time server_time(void);
+/* Allocation that exits on failure: a window manager without memory
+ * cannot do anything useful. */
+void *xmalloc(size_t n);
+void *xcalloc(size_t n, size_t size);
+void *xrealloc(void *p, size_t n);
+char *xstrdup(const char *s);
 void wm_debug(const char *fmt, ...);
 
 /* ---- atoms -------------------------------------------------------------- */
@@ -502,7 +508,7 @@ void config_client_shades(struct client *c);
 
 void ewmh_init(void);
 void ewmh_update_client_list(void);
-void ewmh_update_stacking(void);
+void ewmh_update_stacking(const Window *top_first, int n);
 void ewmh_update_workarea(void);
 void ewmh_update_geometry(void);
 void ewmh_set_active(struct client *c);

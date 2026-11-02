@@ -92,7 +92,7 @@ char *get_text_property(Window w, Atom prop)
 			out = strndup((char *)tp.value, tp.nitems);
 		} else if (Xutf8TextPropertyToTextList(wm.dpy, &tp, &list,
 				&count) >= Success && count > 0 && list) {
-			out = strdup(list[0]);
+			out = xstrdup(list[0]);
 		}
 		if (list)
 			XFreeStringList(list);
@@ -177,7 +177,7 @@ void ewmh_init(void)
 	ewmh_update_geometry();
 	ewmh_set_active(NULL);
 	ewmh_update_client_list();
-	ewmh_update_stacking();
+	ewmh_update_stacking(NULL, 0);
 	ewmh_update_workarea();
 
 	/* Motif applications look for this to know mwm is running. */
@@ -202,8 +202,9 @@ static int by_serial(const void *a, const void *b)
 
 void ewmh_update_client_list(void)
 {
-	struct client **sorted = malloc(sizeof(*sorted) * (wm.n_clients + 1));
-	Window *wins = malloc(sizeof(*wins) * (wm.n_clients + 1));
+	struct client **sorted = xmalloc(sizeof(*sorted) *
+		(wm.n_clients + 1));
+	Window *wins = xmalloc(sizeof(*wins) * (wm.n_clients + 1));
 	memcpy(sorted, wm.clients, sizeof(*sorted) * wm.n_clients);
 	qsort(sorted, wm.n_clients, sizeof(*sorted), by_serial);
 	for (int i = 0; i < wm.n_clients; i++)
@@ -213,13 +214,13 @@ void ewmh_update_client_list(void)
 	free(sorted);
 }
 
-void ewmh_update_stacking(void)
+/* top_first: client windows in the order restack() gave the server. */
+void ewmh_update_stacking(const Window *top_first, int n)
 {
-	Window *wins = malloc(sizeof(*wins) * (wm.n_clients + 1));
-	for (int i = 0; i < wm.n_clients; i++)
-		wins[i] = wm.clients[wm.n_clients - 1 - i]->win;
-	set_windows(wm.root, atoms[NET_CLIENT_LIST_STACKING], wins,
-		wm.n_clients);
+	Window *wins = xmalloc(sizeof(*wins) * (n + 1));
+	for (int i = 0; i < n; i++)
+		wins[i] = top_first[n - 1 - i];
+	set_windows(wm.root, atoms[NET_CLIENT_LIST_STACKING], wins, n);
 	free(wins);
 }
 
@@ -358,6 +359,8 @@ static bool apply(long action, bool current)
 
 static void change_state(struct client *c, long action, Atom p1, Atom p2)
 {
+	if (action < STATE_REMOVE || action > STATE_TOGGLE)
+		return; /* malformed */
 	Atom props[2] = { p1, p2 };
 	bool maxed_v = c->maxed_v, maxed_h = c->maxed_h;
 	bool restack_needed = false;
@@ -536,10 +539,15 @@ void ewmh_client_message(XClientMessageEvent *e)
 	} else if (type == atoms[NET_WM_MOVERESIZE]) {
 		wm_moveresize(c, e);
 	} else if (type == atoms[NET_RESTACK_WINDOW]) {
-		if (e->data.l[2] == Below || e->data.l[2] == BottomIf)
-			client_lower(c);
-		else
-			client_raise(c);
+		XConfigureRequestEvent req = {
+			.type = ConfigureRequest,
+			.window = c->win,
+			.above = (Window)e->data.l[1],
+			.detail = e->data.l[2],
+			.value_mask = CWStackMode |
+				(e->data.l[1] ? CWSibling : 0),
+		};
+		client_configure_request(&req);
 	} else if (type == atoms[NET_WM_DESKTOP]) {
 		/* Only one desktop: keep the property truthful. */
 		long d = (c->sticky || e->data.l[0] == -1 ||
