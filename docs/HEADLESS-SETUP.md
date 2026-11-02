@@ -40,7 +40,7 @@ corporate notebook (Windows)              server (Ubuntu 24.04)
 sudo apt update
 sudo apt install --no-install-recommends \
     build-essential pkg-config git \
-    libx11-dev libxft-dev libxrandr-dev \
+    libx11-dev libxext-dev libxft-dev libxrandr-dev \
     xterm xfonts-base fonts-dejavu-core \
     x11-utils x11-xserver-utils x11-xkb-utils dbus-x11
 ```

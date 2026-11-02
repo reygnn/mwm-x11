@@ -574,17 +574,24 @@ void client_move(struct client *c, int x, int y)
 	client_send_configure(c);
 }
 
-/* Geometry derived from the fullscreen/maximized flags and c->saved. */
-static void apply_state_geometry(struct client *c)
+/* Geometry derived from the fullscreen/snap/maximized state and c->saved,
+ * on the monitor at (cx, cy). */
+static void apply_state_geometry_at(struct client *c, int cx, int cy)
 {
-	int cx, cy;
-	client_center(c, &cx, &cy);
 	if (c->fullscreen) {
 		struct rect m = monitor_rect_at(cx, cy);
 		c->x = m.x;
 		c->y = m.y;
 		c->w = m.w;
 		c->h = m.h;
+	} else if (c->snap != SNAP_NONE) {
+		struct rect r = snap_rect(c->snap, monitor_usable_at(cx, cy));
+		int w = r.w - frame_extra_w(c), h = r.h - frame_extra_h(c);
+		client_apply_size_hints(c, &w, &h, false);
+		c->x = r.x;
+		c->y = r.y;
+		c->w = w;
+		c->h = h;
 	} else {
 		struct rect a = monitor_usable_at(cx, cy);
 		if (c->maxed_h) {
@@ -609,10 +616,18 @@ static void apply_state_geometry(struct client *c)
 	client_configure(c);
 }
 
-/* Remember the current geometry of the axes that are not maximized. */
+void client_apply_state(struct client *c)
+{
+	int cx, cy;
+	client_center(c, &cx, &cy);
+	apply_state_geometry_at(c, cx, cy);
+}
+
+/* Remember the current geometry of the axes that are not maximized.
+ * Snapped windows keep the geometry from before they snapped. */
 static void save_free_axes(struct client *c)
 {
-	if (c->fullscreen)
+	if (c->fullscreen || c->snap != SNAP_NONE)
 		return;
 	if (!c->maxed_h) {
 		c->saved.x = c->x;
@@ -626,13 +641,36 @@ static void save_free_axes(struct client *c)
 
 void client_set_maximized(struct client *c, bool v, bool h)
 {
-	if (v == c->maxed_v && h == c->maxed_h)
+	if (v == c->maxed_v && h == c->maxed_h && c->snap == SNAP_NONE)
 		return;
 	save_free_axes(c);
+	c->snap = SNAP_NONE;
 	c->maxed_v = v;
 	c->maxed_h = h;
 	if (!c->fullscreen)
-		apply_state_geometry(c);
+		client_apply_state(c);
+	ewmh_set_state(c);
+}
+
+/* Snap to a half, a quarter or the whole work area of the monitor at
+ * (px, py); SNAP_NONE goes back to the geometry from before. */
+void client_snap(struct client *c, enum snap s, int px, int py)
+{
+	if (c->fullscreen)
+		return;
+	if (s == SNAP_NONE) {
+		if (c->snap == SNAP_NONE && !c->maxed_v && !c->maxed_h)
+			return;
+		c->snap = SNAP_NONE;
+		c->maxed_v = c->maxed_h = false;
+	} else {
+		save_free_axes(c);
+		c->snap = s == SNAP_MAXIMIZE ? SNAP_NONE : s;
+		c->maxed_v = s == SNAP_MAXIMIZE || s == SNAP_LEFT ||
+			s == SNAP_RIGHT;
+		c->maxed_h = s == SNAP_MAXIMIZE;
+	}
+	apply_state_geometry_at(c, px, py);
 	ewmh_set_state(c);
 }
 
@@ -643,7 +681,7 @@ void client_set_fullscreen(struct client *c, bool fs)
 	if (fs)
 		save_free_axes(c);
 	c->fullscreen = fs;
-	apply_state_geometry(c);
+	client_apply_state(c);
 	ewmh_set_frame_extents(c);
 	ewmh_set_state(c);
 	restack();
@@ -975,8 +1013,8 @@ void client_restore(struct client *c)
 		client_focus(c);
 	} else if (c->fullscreen) {
 		client_set_fullscreen(c, false);
-	} else if (c->maxed_v || c->maxed_h) {
-		client_set_maximized(c, false, false);
+	} else if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
+		client_snap(c, SNAP_NONE, 0, 0);
 	}
 }
 
@@ -1183,8 +1221,10 @@ void client_manage(Window w, bool startup)
 
 static void release(struct client *c, bool destroyed, bool keep_iconic)
 {
-	if (wm.grabbed == c)
+	if (wm.grabbed == c) {
+		wm.grab_zone = SNAP_NONE;
 		end_grab();
+	}
 	if (wm.menu.target == c)
 		menu_close();
 	if (wm.last_click_client == c)
@@ -1288,8 +1328,9 @@ void client_configure_request(XConfigureRequestEvent *e)
 	if (e->value_mask & CWBorderWidth)
 		c->old_bw = e->border_width; /* restored on unmanage */
 
-	if (!c->fullscreen && (e->value_mask & (CWX | CWY | CWWidth |
-			CWHeight))) {
+	/* Fullscreen and snapped windows keep their place. */
+	if (!c->fullscreen && c->snap == SNAP_NONE && (e->value_mask &
+			(CWX | CWY | CWWidth | CWHeight))) {
 		int w = (e->value_mask & CWWidth) ? e->width : c->w;
 		int h = (e->value_mask & CWHeight) ? e->height : c->h;
 		if (c->maxed_h)

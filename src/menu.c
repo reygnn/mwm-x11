@@ -172,7 +172,8 @@ void menu_open_window(struct client *c, int x, int y)
 	m->n_items = 0;
 	m->target = c;
 	bool maxed = c->maxed_v || c->maxed_h;
-	bool normal = !c->minimized && !maxed && !c->fullscreen;
+	bool normal = !c->minimized && !maxed && !c->fullscreen &&
+		c->snap == SNAP_NONE;
 	unsigned f = c->funcs;
 	add(m, "Restore", 'R', "Alt+F5", ACT_RESTORE, !normal);
 	add(m, "Move", 'M', "Alt+F7", ACT_MOVE,
@@ -435,6 +436,12 @@ void run_action(enum action action, struct client *c)
 		break;
 	case ACT_REFRESH:
 		refresh_screen();
+		break;
+	case ACT_SNAP_LEFT:
+	case ACT_SNAP_RIGHT:
+	case ACT_SNAP_UP:
+	case ACT_SNAP_DOWN:
+		snap_step(c, action);
 		break;
 	case ACT_RESTART:
 		wm.restart = true;

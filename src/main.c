@@ -380,13 +380,9 @@ screen_changed:
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
-		if (c->fullscreen || c->maxed_v || c->maxed_h) {
-			bool fs = c->fullscreen, v = c->maxed_v, h = c->maxed_h;
-			c->fullscreen = c->maxed_v = c->maxed_h = false;
-			if (fs)
-				client_set_fullscreen(c, true);
-			else
-				client_set_maximized(c, v, h);
+		if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
+				c->maxed_h) {
+			client_apply_state(c);
 		} else {
 			struct rect b = client_box(c);
 			struct rect m = monitor_usable_at(b.x + b.w / 2,

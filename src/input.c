@@ -13,6 +13,7 @@
 #include "mwm.h"
 
 #define DOUBLE_CLICK_MS 400
+#define DRAG_THRESHOLD 8
 
 struct key {
 	unsigned mod;
@@ -38,6 +39,10 @@ static const struct key keys[] = {
 	{ ControlMask | Mod1Mask, XK_Return, ACT_NEW_WINDOW },
 	{ Mod4Mask, XK_Return, ACT_NEW_WINDOW },
 	{ ControlMask | Mod1Mask, XK_BackSpace, ACT_QUIT },
+	{ Mod4Mask, XK_Left, ACT_SNAP_LEFT },
+	{ Mod4Mask, XK_Right, ACT_SNAP_RIGHT },
+	{ Mod4Mask, XK_Up, ACT_SNAP_UP },
+	{ Mod4Mask, XK_Down, ACT_SNAP_DOWN },
 };
 
 void spawn(const char *cmd)
@@ -136,7 +141,9 @@ static void update_feedback(void)
 {
 	struct client *c = wm.grabbed;
 	char buf[64];
-	if (wm.grab == GRAB_MOVE) {
+	if (wm.grab == GRAB_MOVE && wm.grab_zone != SNAP_NONE) {
+		snprintf(buf, sizeof(buf), "%s", snap_name(wm.grab_zone));
+	} else if (wm.grab == GRAB_MOVE) {
 		snprintf(buf, sizeof(buf), "%+d %+d", c->x, c->y);
 	} else {
 		/* Sizes in the client's own units, e.g. 80x24 for xterm. */
@@ -170,6 +177,13 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	wm.grab_edges = edges;
 	wm.grab_until_click = until_click;
 	wm.grab_orig = (struct rect){ c->x, c->y, c->w, c->h };
+	wm.grab_orig_snap = c->snap;
+	wm.grab_orig_max_v = c->maxed_v;
+	wm.grab_orig_max_h = c->maxed_h;
+	wm.grab_px = wm.grab_last_x = px;
+	wm.grab_py = wm.grab_last_y = py;
+	wm.grab_detached = false;
+	wm.grab_zone = SNAP_NONE;
 	wm.grab_box = client_box(c);
 	if (mode == GRAB_MOVE) {
 		wm.grab_x = px - c->x;
@@ -187,18 +201,35 @@ void end_grab(void)
 	if (wm.grab != GRAB_MOVE && wm.grab != GRAB_RESIZE)
 		return;
 	struct client *c = wm.grabbed;
+	enum snap zone = wm.grab == GRAB_MOVE ? wm.grab_zone : SNAP_NONE;
 	wm.grab = GRAB_NONE;
 	wm.grabbed = NULL;
+	wm.grab_zone = SNAP_NONE;
 	XUngrabPointer(wm.dpy, CurrentTime);
 	XUngrabKeyboard(wm.dpy, CurrentTime);
 	feedback_hide();
-	/* A moved or resized window is no longer maximized in that axis. */
-	if (c && (c->maxed_v || c->maxed_h)) {
-		bool v = c->maxed_v && c->y == wm.grab_orig.y &&
-			c->h == wm.grab_orig.h;
-		bool h = c->maxed_h && c->x == wm.grab_orig.x &&
-			c->w == wm.grab_orig.w;
-		if (v != c->maxed_v || h != c->maxed_h) {
+	snap_preview(SNAP_NONE, 0, 0);
+	if (c && zone != SNAP_NONE) {
+		/* Restoring later brings it back to where it was before this
+		 * drag, not to the screen edge it was dropped on. */
+		bool was_free = wm.grab_orig_snap == SNAP_NONE &&
+			!wm.grab_orig_max_v && !wm.grab_orig_max_h;
+		c->x = was_free ? wm.grab_orig.x : c->saved.x;
+		c->y = was_free ? wm.grab_orig.y : c->saved.y;
+		client_snap(c, zone, wm.grab_last_x, wm.grab_last_y);
+		return;
+	}
+	/* A moved or resized window is no longer snapped, nor maximized
+	 * in the axis that changed. */
+	if (c && (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h)) {
+		struct rect o = wm.grab_orig;
+		bool changed = c->x != o.x || c->y != o.y || c->w != o.w ||
+			c->h != o.h;
+		bool v = c->maxed_v && c->y == o.y && c->h == o.h;
+		bool h = c->maxed_h && c->x == o.x && c->w == o.w;
+		if (v != c->maxed_v || h != c->maxed_h ||
+				(c->snap != SNAP_NONE && changed)) {
+			c->snap = SNAP_NONE;
 			c->maxed_v = v;
 			c->maxed_h = h;
 			c->saved = (struct rect){ c->x, c->y, c->w, c->h };
@@ -212,18 +243,49 @@ static void cancel_grab(void)
 {
 	struct client *c = wm.grabbed;
 	struct rect o = wm.grab_orig;
+	/* Back to where it was, including a snap it was dragged out of;
+	 * c->saved still holds the geometry from before that snap. */
 	c->x = o.x;
 	c->y = o.y;
 	c->w = o.w;
 	c->h = o.h;
+	c->snap = wm.grab_orig_snap;
+	c->maxed_v = wm.grab_orig_max_v;
+	c->maxed_h = wm.grab_orig_max_h;
 	client_configure(c);
+	ewmh_set_state(c);
+	wm.grab_zone = SNAP_NONE;
 	end_grab();
 }
 
 static void process_move(int px, int py)
 {
 	struct client *c = wm.grabbed;
+	wm.grab_last_x = px;
+	wm.grab_last_y = py;
+	if (!wm.grab_detached) {
+		if (abs(px - wm.grab_px) < DRAG_THRESHOLD &&
+				abs(py - wm.grab_py) < DRAG_THRESHOLD)
+			return;
+		wm.grab_detached = true;
+		if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
+			/* As in Windows: the window comes off at its old size,
+			 * holding on at the same spot of its width. */
+			struct rect b = client_box(c);
+			double frac = b.w ? (double)(wm.grab_px - b.x) / b.w : 0.5;
+			client_snap(c, SNAP_NONE, px, py);
+			b = client_box(c);
+			wm.grab_x = (int)(frac * b.w);
+			wm.grab_y = MIN(wm.grab_y, b.h - 1);
+		}
+	}
 	client_move(c, px - wm.grab_x, py - wm.grab_y);
+
+	enum snap zone = snap_zone_at(c, px, py);
+	if (zone != wm.grab_zone) {
+		wm.grab_zone = zone;
+		snap_preview(zone, px, py);
+	}
 	update_feedback();
 }
 

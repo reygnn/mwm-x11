@@ -2,7 +2,7 @@
 
 PREFIX ?= /usr/local
 PKG_CONFIG ?= pkg-config
-PKGS = x11 xft xrandr
+PKGS = x11 xext xft xrandr
 
 ifeq ($(filter clean uninstall,$(MAKECMDGOALS)),)
 MISSING := $(foreach p,$(PKGS),\
@@ -18,7 +18,7 @@ CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit \
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS))
 
 SRC = src/main.c src/client.c src/config.c src/ewmh.c src/frame.c \
-	src/menu.c src/input.c src/draw.c
+	src/menu.c src/input.c src/snap.c src/draw.c
 OBJ = $(SRC:src/%.c=build/%.o)
 
 all: mwm

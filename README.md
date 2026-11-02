@@ -46,8 +46,8 @@ Motif applications.
 
 ## Build (Ubuntu 24.04 / 26.04)
 
-    sudo apt install build-essential pkg-config libx11-dev libxft-dev \
-        libxrandr-dev xterm
+    sudo apt install build-essential pkg-config libx11-dev libxext-dev \
+        libxft-dev libxrandr-dev xterm
     make
     sudo make install   # /usr/local/bin/mwm + X session entry "Mwm (Motif, X11)"
 
@@ -78,12 +78,35 @@ windows.
 | Desktop            | btn1/btn3: root menu                                |
 | Alt + btn1/2/3     | move / lower / resize anywhere in the window        |
 
+## Snapping (as in Windows 11)
+
+Drag a window by its title (or with Alt+btn1) until the pointer touches a
+monitor edge. An outline in the window's colour shows where it will go,
+and it snaps there when you let go:
+
+| Pointer at …            | Window fills …                     |
+|-------------------------|------------------------------------|
+| left / right edge       | left / right half                  |
+| a corner (64 px zone)   | that quarter                       |
+| top edge                | the whole work area (maximized)    |
+
+Dragging a snapped or maximized window away gives it back its previous
+size, still under the pointer. Escape during the drag cancels. Snapped
+halves report `_NET_WM_STATE_MAXIMIZED_VERT`, and panels and docks stay
+uncovered.
+
+Keyboard: Super+Left/Right snap to a half (pressing the other direction
+restores the window). Super+Up goes from a half to its top quarter, or
+maximizes. Super+Down goes from a half to its bottom quarter, from a
+maximized window back to normal, and from a normal window to its icon.
+
 ## Keys (mwm defaults)
 
 Alt+Tab / Alt+Shift+Tab cycle · Alt+Space or Shift+Esc window menu ·
 Alt+F3 lower · Alt+F4 close · Alt+F5 restore · Alt+F7 move · Alt+F8 size ·
 Alt+F9 minimize · Alt+F10 maximize · Alt+F11 fullscreen ·
-Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit.
+Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit ·
+Super+arrows snap (see above).
 
 During a keyboard move or resize, the arrow keys nudge the window (Shift
 for 1 px steps), Return confirms and Escape cancels.

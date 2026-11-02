@@ -215,6 +215,19 @@ enum window_type {
 	WT_NOTIFICATION, /* and other popups that got mapped managed */
 };
 
+/* Snap positions; SNAP_MAXIMIZE is only a target, a client maximized
+ * that way has SNAP_NONE and both maximize flags. */
+enum snap {
+	SNAP_NONE,
+	SNAP_LEFT,
+	SNAP_RIGHT,
+	SNAP_TOP_LEFT,
+	SNAP_TOP_RIGHT,
+	SNAP_BOTTOM_LEFT,
+	SNAP_BOTTOM_RIGHT,
+	SNAP_MAXIMIZE,
+};
+
 /* Stacking layers, bottom to top. */
 enum layer {
 	LAYER_DESKTOP,
@@ -269,6 +282,7 @@ struct client {
 	bool hidden_with_parent; /* minimized along with its transient_for */
 	bool maxed_v, maxed_h;
 	bool fullscreen;
+	enum snap snap; /* halves also set maxed_v, as EWMH sees them */
 	bool above, below, sticky, skip_taskbar, skip_pager, modal;
 	struct rect saved; /* geometry of the unmaximized axes */
 
@@ -309,6 +323,10 @@ enum action {
 	ACT_WINDOW_MENU,
 	ACT_TOGGLE_MAXIMIZE,
 	ACT_TOGGLE_FULLSCREEN,
+	ACT_SNAP_LEFT,
+	ACT_SNAP_RIGHT,
+	ACT_SNAP_UP,
+	ACT_SNAP_DOWN,
 };
 
 struct menu_item {
@@ -396,6 +414,12 @@ struct wm {
 	struct rect grab_orig; /* client geometry at grab start, for Escape */
 	unsigned grab_edges;
 	bool grab_until_click; /* move/size started from menu or keyboard */
+	int grab_px, grab_py;  /* pointer at grab start */
+	int grab_last_x, grab_last_y;
+	bool grab_detached;    /* moved past the drag threshold */
+	enum snap grab_zone;   /* snap target under the pointer */
+	enum snap grab_orig_snap;
+	bool grab_orig_max_v, grab_orig_max_h;
 
 	/* Double-click detection */
 	Time last_click;
@@ -435,6 +459,8 @@ void client_minimize(struct client *c);
 void client_restore(struct client *c);
 void client_set_maximized(struct client *c, bool v, bool h);
 void client_set_fullscreen(struct client *c, bool fs);
+void client_snap(struct client *c, enum snap s, int px, int py);
+void client_apply_state(struct client *c);
 void client_cycle(bool backwards);
 void client_grab_buttons(struct client *c, bool focused);
 void client_update_title(struct client *c);
@@ -496,6 +522,14 @@ void feedback_show(const char *text);
 void feedback_hide(void);
 #define ICON_W 72
 #define ICON_H 72
+
+/* ---- snap.c ------------------------------------------------------------- */
+
+struct rect snap_rect(enum snap s, struct rect area);
+const char *snap_name(enum snap s);
+enum snap snap_zone_at(struct client *c, int px, int py);
+void snap_preview(enum snap s, int px, int py);
+void snap_step(struct client *c, enum action dir);
 
 /* ---- menu.c ------------------------------------------------------------- */
 

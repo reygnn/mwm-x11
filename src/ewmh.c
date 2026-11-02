@@ -448,8 +448,10 @@ static void wm_moveresize(struct client *c, XClientMessageEvent *e)
 	};
 	if (direction == MR_CANCEL) {
 		if (wm.grabbed == c &&
-				(wm.grab == GRAB_MOVE || wm.grab == GRAB_RESIZE))
+				(wm.grab == GRAB_MOVE || wm.grab == GRAB_RESIZE)) {
+			wm.grab_zone = SNAP_NONE;
 			end_grab();
+		}
 		return;
 	}
 	if (direction == MR_MOVE_KEYBOARD) {
