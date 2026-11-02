@@ -67,6 +67,12 @@ entry calls `/usr/local/bin/mwm` explicitly.
 `SIGHUP` or "Restart..." in the root menu re-executes mwm and keeps all
 windows.
 
+## Tests
+
+`tests/docker/run.sh` builds mwm in Docker and walks through tiling under
+Xvfb with xterm and xdotool, logging window geometry and taking
+screenshots into `tests/docker/out/`.
+
 ## Mouse
 
 | Where              | Action                                              |
