@@ -50,6 +50,12 @@ int frame_extra_h(struct client *c)
 	return 2 * frame_border(c) + frame_title(c);
 }
 
+/* Outer frame height; a shaded window keeps only its title bar. */
+int frame_height(struct client *c)
+{
+	return c->shaded ? frame_extra_h(c) : c->h + frame_extra_h(c);
+}
+
 /* Horizontal title bar layout; button positions are -1 when absent. */
 struct title_layout {
 	int menu_x, title_x, title_w, min_x, max_x;
@@ -140,7 +146,7 @@ void frame_render(struct client *c)
 	if (wm.grab_deferred && c == wm.grabbed)
 		return;
 
-	const int W = c->w + 2 * B, H = c->h + 2 * B + T;
+	const int W = c->w + 2 * B, H = frame_height(c);
 	const int bv = MIN(theme.bevel, B);
 	const bool full = B == theme.border;
 	const bool maximized = c->maxed_v && c->maxed_h;
@@ -160,7 +166,8 @@ void frame_render(struct client *c)
 	}
 
 	/* Resize corner grooves, cutting the border at title-bar distance. */
-	if (full && (c->funcs & FUNC_RESIZE) && !maximized) {
+	/* Tiled windows keep them: the decoration stays, inactive. */
+	if (full && ((c->funcs & FUNC_RESIZE) || c->tiled) && !maximized) {
 		int kx, ky;
 		corner_reach(B, W, H, &kx, &ky);
 		draw_groove_v(&cv, kx, bv, B - bv - 1, s);
@@ -197,7 +204,7 @@ enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges)
 {
 	*edges = 0;
 	const int B = frame_border(c), T = frame_title(c);
-	const int W = c->w + 2 * B, H = c->h + 2 * B + T;
+	const int W = c->w + 2 * B, H = frame_height(c);
 
 	if (fx < 0 || fy < 0 || fx >= W || fy >= H)
 		return PART_NONE;

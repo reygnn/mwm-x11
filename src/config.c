@@ -139,6 +139,25 @@ bool config_color(const char *value, uint32_t *rgb)
 	return true;
 }
 
+/* 1 or 0, or -1 when s is unset or no boolean; name is for the log. */
+int config_bool(const char *name, const char *s)
+{
+	static const char *warned; /* log each bad value once, not per drag */
+	if (!s || !*s)
+		return -1;
+	if (!strcasecmp(s, "true") || !strcasecmp(s, "on") ||
+			!strcasecmp(s, "yes") || !strcmp(s, "1"))
+		return 1;
+	if (!strcasecmp(s, "false") || !strcasecmp(s, "off") ||
+			!strcasecmp(s, "no") || !strcmp(s, "0"))
+		return 0;
+	if (s != warned) {
+		wm_log("ignoring %s value %s, not a boolean", name, s);
+		warned = s;
+	}
+	return -1;
+}
+
 static bool rule_color(const struct rule *r, uint32_t *rgb)
 {
 	if (!r)

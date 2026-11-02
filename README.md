@@ -108,13 +108,36 @@ restores the window). Super+Up goes from a half to its top quarter, or
 maximizes. Super+Down goes from a half to its bottom quarter, from a
 maximized window back to normal, and from a normal window to its icon.
 
+## Tiling
+
+Super+T, or "Tile Windows" in the root menu, switches to tiling: the main
+window takes the right part of the screen (55 %), the other windows share
+the left part, one above the other. Gaps around and between them keep the
+desktop and its root menu within reach. A new window, or one back from an
+icon, becomes the main window.
+
+The decoration stays, but tiled windows cannot be moved or resized. The
+title bar buttons do this instead:
+
+| Button   | Main window (right)              | Stack window (left)            |
+|----------|----------------------------------|--------------------------------|
+| Minimize | goes into the stack; the top stack window takes its place | shades: rolls up to its title bar, or unrolls |
+| Maximize | nothing                          | becomes the main window        |
+
+Restore (Alt+F5) unrolls a shaded window. Dialogs, windows of a fixed
+size, fullscreen and minimized windows float as usual; a window that goes
+fullscreen returns to its place afterwards. The layout covers the primary
+monitor. Switching tiling off puts every window back where it was.
+`Mwm*tiling: true` in mwmrc or `MWM_TILING=1` starts with tiling on, and
+a restart keeps the current choice.
+
 ## Keys (mwm defaults)
 
 Alt+Tab / Alt+Shift+Tab (or Alt+Esc) cycle · Alt+Space or Shift+Esc window menu ·
 Alt+F3 lower · Alt+F4 close · Alt+F5 restore · Alt+F7 move · Alt+F8 size ·
 Alt+F9 minimize · Alt+F10 maximize · Alt+F11 fullscreen ·
 Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit ·
-Super+arrows snap (see above).
+Super+arrows snap (see above) · Super+T tiling on/off.
 
 During a keyboard move or resize, the arrow keys nudge the window (Shift
 for 1 px steps), Return confirms and Escape cancels.
@@ -144,6 +167,7 @@ Mwm*fontList:                  Sans:bold:size=10
 | `fontList` | fontconfig pattern for titles and menus (global only) |
 | `rootBackground` | desktop colour (global only) |
 | `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
+| `tiling` | `true`: start in tiling mode (global only) |
 
 A program with its own `activeBackground` keeps its colour when unfocused,
 in a paler shade (mixed with the global `background`), and so does its
@@ -162,4 +186,5 @@ The environment overrides the global entries:
 | `MWM_ROOT`        | `#5b7792`           | desktop colour                    |
 | `MWM_FONT`        | `Sans:bold:size=10` | fontconfig pattern                |
 | `MWM_MOVE_OPAQUE` | `0`                 | `1`: opaque move/resize           |
+| `MWM_TILING`      | `0`                 | `1`: start in tiling mode         |
 | `MWM_TERMINAL`    | first of xterm, uxterm, x-terminal-emulator, … | "New Window" |

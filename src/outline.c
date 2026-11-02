@@ -15,7 +15,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include "mwm.h"
 
 #define OUTLINE_W 3 /* line thickness */
@@ -26,32 +25,13 @@ static Window strip[N_STRIPS];
 /* Root geometry each strip has now; w == 0 while it is unmapped. */
 static struct rect shown[N_STRIPS];
 
-/* 1 or 0, or -1 when s is unset or no boolean. */
-static int parse_bool(const char *name, const char *s)
-{
-	static const char *warned; /* log each bad value once, not per drag */
-	if (!s || !*s)
-		return -1;
-	if (!strcasecmp(s, "true") || !strcasecmp(s, "on") ||
-			!strcasecmp(s, "yes") || !strcmp(s, "1"))
-		return 1;
-	if (!strcasecmp(s, "false") || !strcasecmp(s, "off") ||
-			!strcasecmp(s, "no") || !strcmp(s, "0"))
-		return 0;
-	if (s != warned) {
-		wm_log("ignoring %s value %s, not a boolean", name, s);
-		warned = s;
-	}
-	return -1;
-}
-
 /* Whether a move or resize starting now should use the outline. The
  * environment wins over mwmrc, unless it holds no boolean. */
 bool outline_wanted(void)
 {
-	int opaque = parse_bool("MWM_MOVE_OPAQUE", getenv("MWM_MOVE_OPAQUE"));
+	int opaque = config_bool("MWM_MOVE_OPAQUE", getenv("MWM_MOVE_OPAQUE"));
 	if (opaque < 0)
-		opaque = parse_bool("moveOpaque", config_get("moveOpaque"));
+		opaque = config_bool("moveOpaque", config_get("moveOpaque"));
 	return opaque != 1;
 }
 

@@ -188,6 +188,24 @@ void menu_open_window(struct client *c, int x, int y)
 	bool normal = !c->minimized && !maxed && !c->fullscreen &&
 		c->snap == SNAP_NONE;
 	unsigned f = c->funcs;
+	if (c->tiled) {
+		/* In the layout: Minimize moves the main window into the
+		 * stack or shades a stack window, Maximize makes a stack
+		 * window the main one, Restore unshades. */
+		bool main = tile_is_main(c);
+		add(m, "Restore", 'R', "Alt+F5", ACT_RESTORE, c->shaded);
+		add(m, "Move", 'M', "Alt+F7", ACT_MOVE, false);
+		add(m, "Size", 'S', "Alt+F8", ACT_SIZE, false);
+		add(m, "Minimize", 'n', "Alt+F9", ACT_MINIMIZE,
+			(f & FUNC_MINIMIZE) && (!main || tile_has_stack()));
+		add(m, "Maximize", 'x', "Alt+F10", ACT_MAXIMIZE,
+			(f & FUNC_MAXIMIZE) && !main);
+		add(m, "Lower", 'L', "Alt+F3", ACT_LOWER, true);
+		add(m, NULL, 0, NULL, ACT_NONE, false);
+		add(m, "Close", 'C', "Alt+F4", ACT_CLOSE, f & FUNC_CLOSE);
+		open_at(x, y);
+		return;
+	}
 	add(m, "Restore", 'R', "Alt+F5", ACT_RESTORE, !normal);
 	add(m, "Move", 'M', "Alt+F7", ACT_MOVE,
 		(f & FUNC_MOVE) && !c->fullscreen);
@@ -215,6 +233,8 @@ void menu_open_root(int x, int y)
 	add(m, "Shuffle Up", 'U', NULL, ACT_SHUFFLE_UP, true);
 	add(m, "Shuffle Down", 'D', NULL, ACT_SHUFFLE_DOWN, true);
 	add(m, "Refresh", 'f', NULL, ACT_REFRESH, true);
+	add(m, wm.tiling ? "Untile Windows" : "Tile Windows", 'T', "Super+T",
+		ACT_TOGGLE_TILING, true);
 	add(m, NULL, 0, NULL, ACT_NONE, false);
 	add(m, "Restart...", 'R', NULL, ACT_RESTART_CONFIRM, true);
 	add(m, "Quit...", 'Q', NULL, ACT_QUIT_CONFIRM, true);
@@ -428,18 +448,24 @@ void run_action(enum action action, struct client *c)
 			px, py);
 		break;
 	case ACT_MINIMIZE:
-		if (c && (c->funcs & FUNC_MINIMIZE))
+		if (c && c->tiled && (c->funcs & FUNC_MINIMIZE))
+			tile_iconify(c);
+		else if (c && (c->funcs & FUNC_MINIMIZE))
 			client_minimize(c);
 		break;
 	case ACT_MAXIMIZE:
-		if (c && (c->funcs & FUNC_MAXIMIZE)) {
+		if (c && c->tiled && (c->funcs & FUNC_MAXIMIZE)) {
+			tile_promote(c);
+		} else if (c && (c->funcs & FUNC_MAXIMIZE)) {
 			if (c->minimized)
 				client_restore(c);
 			client_set_maximized(c, true, true);
 		}
 		break;
 	case ACT_TOGGLE_MAXIMIZE:
-		if (c && (c->funcs & FUNC_MAXIMIZE) && !c->minimized) {
+		if (c && c->tiled && (c->funcs & FUNC_MAXIMIZE)) {
+			tile_promote(c);
+		} else if (c && (c->funcs & FUNC_MAXIMIZE) && !c->minimized) {
 			bool on = !(c->maxed_v && c->maxed_h);
 			client_set_maximized(c, on, on);
 		}
@@ -473,6 +499,9 @@ void run_action(enum action action, struct client *c)
 		break;
 	case ACT_REFRESH:
 		refresh_screen();
+		break;
+	case ACT_TOGGLE_TILING:
+		tile_toggle();
 		break;
 	case ACT_SNAP_LEFT:
 	case ACT_SNAP_RIGHT:

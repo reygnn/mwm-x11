@@ -44,6 +44,7 @@ void wm_debug(const char *fmt, ...);
 	X(MOTIF_WM_HINTS, "_MOTIF_WM_HINTS") \
 	X(MOTIF_WM_INFO, "_MOTIF_WM_INFO") \
 	X(MWM_HANDOVER, "_MWM_HANDOVER") \
+	X(MWM_TILING, "_MWM_TILING") \
 	X(GTK_SHOW_WINDOW_MENU, "_GTK_SHOW_WINDOW_MENU") \
 	X(NET_SUPPORTED, "_NET_SUPPORTED") \
 	X(NET_SUPPORTING_WM_CHECK, "_NET_SUPPORTING_WM_CHECK") \
@@ -300,6 +301,15 @@ struct client {
 	bool above, below, sticky, skip_taskbar, skip_pager, modal;
 	struct rect saved; /* geometry of the unmaximized axes */
 
+	/* Tiling mode (tile.c): the window sits in a cell of the layout and
+	 * cannot be moved or resized; saved keeps its floating geometry. */
+	bool tiled;
+	bool tile_main;  /* the main window on the right */
+	bool shaded;     /* in the stack, rolled up to its title bar */
+	bool tile_back;  /* fullscreen from the layout: back into it after */
+	long tile_seq;   /* layout order, lowest first (the main window) */
+	struct rect tile; /* its cell, frame coordinates */
+
 	long strut[12]; /* _NET_WM_STRUT_PARTIAL layout */
 	bool has_strut;
 
@@ -342,6 +352,7 @@ enum action {
 	ACT_SNAP_RIGHT,
 	ACT_SNAP_UP,
 	ACT_SNAP_DOWN,
+	ACT_TOGGLE_TILING,
 };
 
 struct menu_item {
@@ -457,6 +468,8 @@ struct wm {
 	bool running;
 	bool restart;
 	bool replaced; /* another manager took over: hand state over too */
+	bool tiling;    /* tiling mode on */
+	long tile_front; /* tile_seq of the newest window, which leads */
 };
 
 extern struct wm wm;
@@ -485,6 +498,8 @@ void client_set_maximized(struct client *c, bool v, bool h);
 void client_set_fullscreen(struct client *c, bool fs);
 void client_snap(struct client *c, enum snap s, int px, int py);
 void client_apply_state(struct client *c);
+void client_set_tiled(struct client *c, bool on, bool apply);
+struct client *transient_parent(struct client *c);
 void client_cycle(bool backwards);
 void client_grab_buttons(struct client *c, bool focused);
 void client_expect_unmap(struct client *c);
@@ -513,6 +528,7 @@ struct rect client_box(struct client *c);
 void config_load(void);
 const char *config_get(const char *resource);
 bool config_color(const char *value, uint32_t *rgb);
+int config_bool(const char *name, const char *value);
 void config_client_shades(struct client *c);
 
 /* ---- ewmh.c ------------------------------------------------------------- */
@@ -539,6 +555,7 @@ int frame_border(struct client *c);
 int frame_title(struct client *c);
 int frame_extra_w(struct client *c);
 int frame_extra_h(struct client *c);
+int frame_height(struct client *c);
 void frame_render(struct client *c);
 enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges);
 void icon_render(struct client *c);
@@ -555,6 +572,17 @@ const char *snap_name(enum snap s);
 enum snap snap_zone_at(struct client *c, int px, int py);
 void snap_preview(enum snap s, int px, int py);
 void snap_step(struct client *c, enum action dir);
+
+/* ---- tile.c ------------------------------------------------------------- */
+
+void tile_init(void);
+void tile_toggle(void);
+void tile_arrange(void);
+bool tile_is_main(struct client *c);
+bool tile_has_stack(void);
+void tile_iconify(struct client *c);
+void tile_promote(struct client *c);
+void tile_unshade(struct client *c);
 
 /* ---- outline.c ---------------------------------------------------------- */
 

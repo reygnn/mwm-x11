@@ -44,6 +44,7 @@ static const struct key keys[] = {
 	{ Mod4Mask, XK_Right, ACT_SNAP_RIGHT },
 	{ Mod4Mask, XK_Up, ACT_SNAP_UP },
 	{ Mod4Mask, XK_Down, ACT_SNAP_DOWN },
+	{ Mod4Mask, XK_t, ACT_TOGGLE_TILING },
 };
 
 void spawn(const char *cmd)

@@ -12,8 +12,11 @@
 #include "mwm.h"
 
 #define PING_TIMEOUT_MS 3000
-/* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h. */
-#define HANDOVER_LEN 9
+/* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h,
+ * then tile_seq and the tiling flags. */
+#define HANDOVER_LEN 11
+#define HANDOVER_TILED  1
+#define HANDOVER_SHADED 2
 /* Largest window size the X protocol can carry. */
 #define X_SIZE_MAX 32767
 
@@ -79,7 +82,7 @@ struct client *client_find_win(Window w)
 	return NULL;
 }
 
-static struct client *transient_parent(struct client *c)
+struct client *transient_parent(struct client *c)
 {
 	return c->transient_for ? client_find_win(c->transient_for) : NULL;
 }
@@ -131,9 +134,17 @@ void monitors_update(void)
 		int n = 0;
 		XRRMonitorInfo *m = XRRGetMonitors(wm.dpy, wm.root, True, &n);
 		for (int i = 0; m && i < n && wm.n_mon < MAX_MONITORS; i++) {
-			if (m[i].width > 0 && m[i].height > 0)
-				wm.mon[wm.n_mon++] = (struct rect){ m[i].x,
-					m[i].y, m[i].width, m[i].height };
+			if (m[i].width <= 0 || m[i].height <= 0)
+				continue;
+			wm.mon[wm.n_mon] = (struct rect){ m[i].x, m[i].y,
+				m[i].width, m[i].height };
+			/* The primary monitor first: tiling uses mon[0]. */
+			if (m[i].primary && wm.n_mon) {
+				struct rect t = wm.mon[0];
+				wm.mon[0] = wm.mon[wm.n_mon];
+				wm.mon[wm.n_mon] = t;
+			}
+			wm.n_mon++;
 		}
 		if (m)
 			XRRFreeMonitors(m);
@@ -203,7 +214,7 @@ struct rect monitor_usable_at(int x, int y)
 struct rect client_box(struct client *c)
 {
 	return (struct rect){ c->x, c->y, c->w + frame_extra_w(c),
-		c->h + frame_extra_h(c) };
+		frame_height(c) };
 }
 
 static void client_center(struct client *c, int *x, int *y)
@@ -417,6 +428,10 @@ void client_update_decorations(struct client *c)
 		d &= ~DECOR_MINIMIZE;
 	if (!(f & FUNC_MAXIMIZE))
 		d &= ~DECOR_MAXIMIZE;
+	/* Tiled: the full decoration stays, only moving and resizing do
+	 * nothing; the layout places the window. */
+	if (c->tiled)
+		f &= ~(FUNC_MOVE | FUNC_RESIZE);
 	c->decor = d;
 	c->funcs = f;
 }
@@ -601,7 +616,7 @@ void client_configure(struct client *c)
 		return;
 	int B = frame_border(c), T = frame_title(c);
 	XMoveResizeWindow(wm.dpy, c->frame, c->x, c->y, c->w + 2 * B,
-		c->h + 2 * B + T);
+		frame_height(c));
 	XMoveResizeWindow(wm.dpy, c->win, B, B + T, c->w, c->h);
 	frame_render(c);
 	client_send_configure(c);
@@ -621,6 +636,21 @@ void client_move(struct client *c, int x, int y)
  * on the monitor at (cx, cy). */
 static void apply_state_geometry_at(struct client *c, int cx, int cy)
 {
+	if (c->tiled) {
+		/* Its cell, as far as the size hints allow: the main window
+		 * keeps to the right edge, the stack to the left. A shaded
+		 * one keeps its client height for when it unrolls. */
+		struct rect r = c->tile;
+		int w = r.w - frame_extra_w(c), h = r.h - frame_extra_h(c);
+		client_apply_size_hints(c, &w, &h, true);
+		c->w = w;
+		if (!c->shaded)
+			c->h = h;
+		c->x = c->tile_main ? r.x + r.w - (w + frame_extra_w(c)) : r.x;
+		c->y = r.y;
+		client_configure(c);
+		return;
+	}
 	if (c->fullscreen) {
 		struct rect m = monitor_rect_at(cx, cy);
 		c->x = m.x;
@@ -672,10 +702,11 @@ static void struts_changed(void)
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
-		if (!c->minimized && !c->fullscreen && (c->snap != SNAP_NONE ||
-				c->maxed_v || c->maxed_h))
+		if (!c->minimized && !c->fullscreen && !c->tiled &&
+				(c->snap != SNAP_NONE || c->maxed_v || c->maxed_h))
 			client_apply_state(c);
 	}
+	tile_arrange();
 	icons_arrange();
 }
 
@@ -697,6 +728,8 @@ static void save_free_axes(struct client *c)
 
 void client_set_maximized(struct client *c, bool v, bool h)
 {
+	if (c->tiled)
+		return; /* the layout decides; see tile_promote */
 	if (v == c->maxed_v && h == c->maxed_h && c->snap == SNAP_NONE)
 		return;
 	save_free_axes(c);
@@ -712,7 +745,7 @@ void client_set_maximized(struct client *c, bool v, bool h)
  * (px, py); SNAP_NONE goes back to the geometry from before. */
 void client_snap(struct client *c, enum snap s, int px, int py)
 {
-	if (c->fullscreen)
+	if (c->fullscreen || c->tiled)
 		return;
 	if (s == SNAP_NONE) {
 		if (c->snap == SNAP_NONE && !c->maxed_v && !c->maxed_h)
@@ -734,13 +767,48 @@ void client_set_fullscreen(struct client *c, bool fs)
 {
 	if (c->fullscreen == fs)
 		return;
-	if (fs)
+	/* A tiled window leaves the layout for fullscreen and goes back
+	 * into it afterwards; saved still holds its floating geometry. */
+	if (fs && c->tiled) {
+		client_set_tiled(c, false, false);
+		c->tile_back = true;
+	} else if (fs) {
 		save_free_axes(c);
+	}
 	c->fullscreen = fs;
-	client_apply_state(c);
+	if (!fs && c->tile_back && wm.tiling)
+		tile_arrange(); /* places it, saved untouched */
+	if (!c->tiled) {
+		/* Floating, or no longer fit for the layout. */
+		c->tile_back = c->tile_back && fs;
+		client_apply_state(c);
+	}
 	ewmh_set_frame_extents(c);
 	ewmh_set_state(c);
 	restack();
+	if (fs)
+		tile_arrange(); /* the others close the gap */
+}
+
+/* Into the layout or out of it. In: saved takes the floating geometry,
+ * unless it already holds it (back from fullscreen, see tile_back). Out:
+ * back to that geometry, or the state the window had, if apply. */
+void client_set_tiled(struct client *c, bool on, bool apply)
+{
+	if (c->tiled == on)
+		return;
+	if (on && !c->tile_back)
+		save_free_axes(c);
+	/* Shading only lives in the layout; one handed over by a restart
+	 * comes back shaded. */
+	c->shaded = on && c->tile_back && c->shaded;
+	c->tile_back = false;
+	c->tiled = on;
+	c->tile_main = false;
+	client_update_decorations(c);
+	ewmh_set_allowed_actions(c);
+	if (!on && apply)
+		client_apply_state(c);
 }
 
 /* ---- stacking ----------------------------------------------------------- */
@@ -1070,6 +1138,7 @@ void client_minimize(struct client *c)
 	if (c->has_strut)
 		struts_changed();
 	restack();
+	tile_arrange();
 	if (had_focus)
 		client_focus_next(c);
 }
@@ -1086,6 +1155,9 @@ static void deiconify(struct client *c)
 	}
 	if (c->has_strut)
 		struts_changed();
+	/* Back from an icon it is the newest window of the layout. */
+	c->tile_seq = --wm.tile_front;
+	tile_arrange();
 }
 
 /* mwm's f.normalize: back from an icon, fullscreen or maximized state. */
@@ -1110,6 +1182,8 @@ void client_restore(struct client *c)
 		deiconify(c);
 		client_raise(c);
 		client_focus(c);
+	} else if (c->shaded) {
+		tile_unshade(c);
 	} else if (c->fullscreen) {
 		client_set_fullscreen(c, false);
 	} else if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
@@ -1202,6 +1276,15 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 			c->maxed_v = s == SNAP_LEFT || s == SNAP_RIGHT;
 			c->maxed_h = false;
 			ewmh_set_state(c);
+		}
+		/* Its place in the layout; saved already is its floating
+		 * geometry, so it goes back in without saving again. */
+		c->tile_seq = v[9];
+		wm.tile_front = MIN(wm.tile_front, v[9]);
+		if (v[10] & HANDOVER_TILED) {
+			c->tile_back = true;
+			c->shaded = !c->fullscreen &&
+				(v[10] & HANDOVER_SHADED);
 		}
 	}
 	XFree(v);
@@ -1301,6 +1384,7 @@ void client_manage(Window w, bool startup)
 	client_grab_buttons(c, false);
 
 	list_insert(c, 0);
+	c->tile_seq = --wm.tile_front; /* a new window leads the layout */
 	long desktop = c->sticky ? (long)0xffffffffUL : 0;
 	XChangeProperty(wm.dpy, w, atoms[NET_WM_DESKTOP], XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)&desktop, 1);
@@ -1340,6 +1424,8 @@ void client_manage(Window w, bool startup)
 		if (wa.map_state == IsUnmapped)
 			c->ignore_unmap--;
 	} else {
+		/* Into the layout before it shows, so it does not jump. */
+		tile_arrange();
 		XMapWindow(wm.dpy, w);
 		XMapWindow(wm.dpy, c->frame);
 		client_set_wm_state(c, NormalState);
@@ -1386,7 +1472,9 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 			 * at, so a stale copy is recognised. */
 			long v[HANDOVER_LEN] = {
 				c->saved.x, c->saved.y, c->saved.w, c->saved.h,
-				c->snap, x, y, c->w, c->h,
+				c->snap, x, y, c->w, c->h, c->tile_seq,
+				(c->tiled || c->tile_back ? HANDOVER_TILED : 0) |
+				(c->shaded ? HANDOVER_SHADED : 0),
 			};
 			XChangeProperty(wm.dpy, c->win, atoms[MWM_HANDOVER],
 				XA_CARDINAL, 32, PropModeReplace,
@@ -1434,6 +1522,7 @@ void client_unmanage(struct client *c, bool destroyed)
 	ewmh_update_client_list();
 	restack();
 	icons_arrange();
+	tile_arrange();
 	if (had_focus)
 		client_focus_next(NULL);
 }
@@ -1469,7 +1558,9 @@ void client_redecorate(struct client *c)
 	/* A window that fills an area keeps filling it with the new frame
 	 * (maximized, snapped or fullscreen); the free axes keep where they
 	 * are now. */
-	if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
+	if (c->tiled) {
+		client_apply_state(c);
+	} else if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
 			c->maxed_h) {
 		save_free_axes(c);
 		client_apply_state(c);
@@ -1478,6 +1569,7 @@ void client_redecorate(struct client *c)
 	}
 	ewmh_set_frame_extents(c);
 	ewmh_set_allowed_actions(c);
+	tile_arrange(); /* fixed size or type may have changed */
 }
 
 void client_configure_request(XConfigureRequestEvent *e)
@@ -1497,9 +1589,9 @@ void client_configure_request(XConfigureRequestEvent *e)
 	if (e->value_mask & CWBorderWidth)
 		c->old_bw = e->border_width; /* restored on unmanage */
 
-	/* Fullscreen and snapped windows keep their place. */
-	if (!c->fullscreen && c->snap == SNAP_NONE && (e->value_mask &
-			(CWX | CWY | CWWidth | CWHeight))) {
+	/* Fullscreen, snapped and tiled windows keep their place. */
+	if (!c->fullscreen && c->snap == SNAP_NONE && !c->tiled &&
+			(e->value_mask & (CWX | CWY | CWWidth | CWHeight))) {
 		int w = (e->value_mask & CWWidth) ? e->width : c->w;
 		int h = (e->value_mask & CWHeight) ? e->height : c->h;
 		if (c->maxed_h)
@@ -1587,6 +1679,7 @@ void client_property_notify(XPropertyEvent *e)
 	} else if (a == XA_WM_TRANSIENT_FOR) {
 		client_update_transient(c);
 		restack();
+		tile_arrange(); /* dialogs float */
 	} else if (a == atoms[MOTIF_WM_HINTS] ||
 			a == atoms[NET_WM_WINDOW_TYPE]) {
 		client_update_transient(c);

@@ -488,6 +488,8 @@ screen_changed:
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
+		if (c->tiled)
+			continue; /* laid out anew below */
 		if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
 				c->maxed_h) {
 			client_apply_state(c);
@@ -500,6 +502,7 @@ screen_changed:
 				client_move(c, m.x + 32, m.y + 32);
 		}
 	}
+	tile_arrange();
 	icons_arrange();
 }
 
@@ -635,6 +638,7 @@ int main(int argc, char *argv[])
 	setup_signals();
 	setup(replace);
 	wm.terminal = pick_terminal();
+	tile_init();
 	scan();
 	XSync(wm.dpy, False);
 	wm_log("running on %s, terminal: %s", DisplayString(wm.dpy),
@@ -671,6 +675,10 @@ int main(int argc, char *argv[])
 	};
 	for (size_t i = 0; i < LENGTH(root_props); i++)
 		XDeleteProperty(wm.dpy, wm.root, atoms[root_props[i]]);
+	/* Tiling on or off carries over to the next mwm, not to the next
+	 * session. */
+	if (!wm.restart && !wm.replaced)
+		XDeleteProperty(wm.dpy, wm.root, atoms[MWM_TILING]);
 	XDestroyWindow(wm.dpy, wm.check);
 	XSync(wm.dpy, False);
 	XCloseDisplay(wm.dpy);
