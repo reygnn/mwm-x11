@@ -180,7 +180,7 @@ Plain OpenSSH works the same way:
 ### B1. Install TigerVNC and set a password (server)
 
 ```sh
-sudo apt install --no-install-recommends tigervnc-standalone-server tigervnc-tools
+sudo apt install --no-install-recommends tigervnc-standalone-server tigervnc-tools xauth
 mkdir -p ~/.vnc
 tigervncpasswd ~/.vnc/passwd     # answer "n" to the view-only question
 chmod 600 ~/.vnc/passwd
@@ -189,7 +189,8 @@ chmod 600 ~/.vnc/passwd
 `Xtigervnc` is an X server and VNC server in one and needs no GPU. VNC
 passwords are limited to 8 characters. That is acceptable here because the
 VNC port is reachable only from the server itself. The password guards
-against other users on the same server.
+the VNC port against other users on the same server. An X authority cookie,
+which the start script below creates, guards the X display itself.
 
 ### B2. Start script (server)
 
@@ -203,13 +204,19 @@ set -eu
 N=${MWM_DISPLAY:-1}                 # display :1 -> VNC port 5901
 GEOMETRY=${MWM_GEOMETRY:-1600x900}
 
-Xtigervnc ":$N" \
+# Only clients holding this cookie may use the display: without it,
+# any local user could connect to /tmp/.X11-unix/X$N directly.
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+xauth -q add ":$N" . "$(mcookie)"
+
+Xtigervnc ":$N" -auth "$XAUTHORITY" \
     -geometry "$GEOMETRY" -depth 24 \
     -localhost -rfbport "$((5900 + N))" \
     -rfbauth "$HOME/.vnc/passwd" -SecurityTypes VncAuth \
     -desktop mwm -AlwaysShared &
 xvnc=$!
 trap 'kill "$xvnc" 2>/dev/null || :' EXIT
+trap 'exit 0' HUP INT TERM          # stopping is a clean exit, for systemd
 
 # Wait until the display accepts connections.
 i=0
@@ -223,7 +230,7 @@ export DISPLAY=":$N"
 /usr/local/bin/mwm &
 wm=$!
 # Stopping the script stops both; mwm quitting stops the display.
-trap 'kill "$wm" "$xvnc" 2>/dev/null || :' EXIT INT TERM
+trap 'kill "$wm" "$xvnc" 2>/dev/null || :' EXIT
 status=0
 wait "$wm" || status=$?
 exit "$status"                      # mwm's exit code, for systemd
@@ -242,6 +249,10 @@ DISPLAY=:1 xprop -root _NET_SUPPORTING_WM_CHECK   # prints a window id -> mwm ru
 ss -ltn | grep 5901                               # only 127.0.0.1 / [::1]
 kill %1                                           # stops mwm and Xtigervnc
 ```
+
+A session started like this ends when the SSH connection does. To keep it
+running after logout, use the service below, or start it with
+`setsid -f ~/bin/mwm-vnc`.
 
 ### B3. Run it as a service (server, optional)
 
@@ -275,9 +286,11 @@ sudo loginctl enable-linger "$USER"   # run user services without a login
 | Stop / start | `systemctl --user stop mwm-vnc` / `start` |
 
 "Quit..." in the root menu or Ctrl+Alt+Backspace ends mwm with exit code 0,
-so the service stays stopped until you start it again. "Restart..." in the
-root menu (or `systemctl --user kill -s HUP mwm-vnc`) re-executes mwm and
-keeps all windows open.
+so the service stays stopped until you start it again; `systemctl --user
+stop` counts as a clean stop too. "Restart..." in the root menu, or
+`pkill -HUP -u "$USER" -x mwm`, re-executes mwm and keeps all windows open.
+Do not use `systemctl --user kill -s HUP` for that: it signals every
+process of the service, and Xtigervnc resets the display on SIGHUP.
 
 ### B4. Connect (your machine)
 
