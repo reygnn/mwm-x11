@@ -121,6 +121,15 @@ static void draw_button(struct canvas *cv, struct client *c,
 	}
 }
 
+/* How far the resize corners reach along each side of a W x H frame:
+ * B+T, at most half the frame. Hit testing and the grooves agree. */
+static void corner_reach(int B, int W, int H, int *kx, int *ky)
+{
+	int k = B + theme.title_height;
+	*kx = MIN(k, W / 2);
+	*ky = MIN(k, H / 2);
+}
+
 void frame_render(struct client *c)
 {
 	const int B = frame_border(c), T = frame_title(c);
@@ -152,15 +161,16 @@ void frame_render(struct client *c)
 
 	/* Resize corner grooves, cutting the border at title-bar distance. */
 	if (full && (c->funcs & FUNC_RESIZE) && !maximized) {
-		int k = B + theme.title_height;
-		draw_groove_v(&cv, k, bv, B - bv - 1, s);
-		draw_groove_v(&cv, W - k - 2, bv, B - bv - 1, s);
-		draw_groove_v(&cv, k, H - B + 1, B - bv - 1, s);
-		draw_groove_v(&cv, W - k - 2, H - B + 1, B - bv - 1, s);
-		draw_groove_h(&cv, bv, k, B - bv - 1, s);
-		draw_groove_h(&cv, W - B + 1, k, B - bv - 1, s);
-		draw_groove_h(&cv, bv, H - k - 2, B - bv - 1, s);
-		draw_groove_h(&cv, W - B + 1, H - k - 2, B - bv - 1, s);
+		int kx, ky;
+		corner_reach(B, W, H, &kx, &ky);
+		draw_groove_v(&cv, kx, bv, B - bv - 1, s);
+		draw_groove_v(&cv, W - kx - 2, bv, B - bv - 1, s);
+		draw_groove_v(&cv, kx, H - B + 1, B - bv - 1, s);
+		draw_groove_v(&cv, W - kx - 2, H - B + 1, B - bv - 1, s);
+		draw_groove_h(&cv, bv, ky, B - bv - 1, s);
+		draw_groove_h(&cv, W - B + 1, ky, B - bv - 1, s);
+		draw_groove_h(&cv, bv, H - ky - 2, B - bv - 1, s);
+		draw_groove_h(&cv, W - B + 1, H - ky - 2, B - bv - 1, s);
 	}
 
 	if (T) {
@@ -209,17 +219,20 @@ enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges)
 			(c->maxed_v && c->maxed_h))
 		return PART_TITLE;
 
-	/* Border: the corner pieces extend B+T along each side. */
-	int k = B + theme.title_height;
+	/* Border: the corner pieces extend B+T along each side, but no
+	 * further than half the frame, or a short window would be at its
+	 * top and bottom edge at once. */
+	int kx, ky;
+	corner_reach(B, W, H, &kx, &ky);
 	bool in_lr = fx < B || fx >= W - B;
 	bool in_tb = fy < B || fy >= H - B;
-	if (fx < B || (in_tb && fx < k))
+	if (fx < B || (in_tb && fx < kx))
 		*edges |= EDGE_LEFT;
-	if (fx >= W - B || (in_tb && fx >= W - k))
+	else if (fx >= W - B || (in_tb && fx >= W - kx))
 		*edges |= EDGE_RIGHT;
-	if (fy < B || (in_lr && fy < k))
+	if (fy < B || (in_lr && fy < ky))
 		*edges |= EDGE_TOP;
-	if (fy >= H - B || (in_lr && fy >= H - k))
+	else if (fy >= H - B || (in_lr && fy >= H - ky))
 		*edges |= EDGE_BOTTOM;
 	return PART_RESIZE;
 }

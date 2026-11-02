@@ -274,7 +274,7 @@ void ewmh_set_state(struct client *c)
 		s[n++] = atoms[NET_WM_STATE_ABOVE];
 	if (c->below)
 		s[n++] = atoms[NET_WM_STATE_BELOW];
-	if (c->urgent)
+	if (c->urgent || c->attention)
 		s[n++] = atoms[NET_WM_STATE_DEMANDS_ATTENTION];
 	if (c == wm.focus)
 		s[n++] = atoms[NET_WM_STATE_FOCUSED];
@@ -338,7 +338,7 @@ void ewmh_read_initial_state(struct client *c)
 		else if (s[i] == atoms[NET_WM_STATE_BELOW])
 			c->below = true;
 		else if (s[i] == atoms[NET_WM_STATE_DEMANDS_ATTENTION])
-			c->urgent = true;
+			c->attention = true;
 	}
 	XFree(s);
 }
@@ -394,7 +394,12 @@ static void change_state(struct client *c, long action, Atom p1, Atom p2)
 		} else if (p == atoms[NET_WM_STATE_MODAL]) {
 			c->modal = apply(action, c->modal);
 		} else if (p == atoms[NET_WM_STATE_DEMANDS_ATTENTION]) {
-			c->urgent = apply(action, c->urgent) && c != wm.focus;
+			/* Removing it also drops the ICCCM urgency it shows;
+			 * the client sets that again if it still means it. */
+			bool on = apply(action, c->urgent || c->attention);
+			c->attention = on && c != wm.focus;
+			if (!on)
+				c->urgent = false;
 		}
 		/* HIDDEN and FOCUSED belong to the window manager. */
 	}

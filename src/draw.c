@@ -121,12 +121,14 @@ void theme_init(void)
 	uint32_t root = setting_color("MWM_ROOT", "rootBackground", 0x5b7792);
 	uint32_t fg;
 
-	shade_from(&theme.inactive, inactive,
-		config_color(config_get("foreground"), &fg) ? fg :
-		contrast(inactive));
-	shade_from(&theme.active, active,
-		config_color(config_get("activeForeground"), &fg) ? fg :
-		contrast(active));
+	theme.inactive_fg = config_color(config_get("foreground"), &fg) ?
+		(int64_t)fg : -1;
+	theme.active_fg = config_color(config_get("activeForeground"), &fg) ?
+		(int64_t)fg : -1;
+	shade_from(&theme.inactive, inactive, theme.inactive_fg >= 0 ?
+		(uint32_t)theme.inactive_fg : contrast(inactive));
+	shade_from(&theme.active, active, theme.active_fg >= 0 ?
+		(uint32_t)theme.active_fg : contrast(active));
 	alloc_xft(&theme.dim, color_mix(inactive,
 		color_mix(inactive, 0, 0.5f), 0.5f));
 	theme.root = alloc_pixel(root);

@@ -12,6 +12,10 @@
 #include "mwm.h"
 
 #define PING_TIMEOUT_MS 3000
+/* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h. */
+#define HANDOVER_LEN 9
+/* Largest window size the X protocol can carry. */
+#define X_SIZE_MAX 32767
 
 /* _MOTIF_WM_HINTS flags */
 #define MWM_HINTS_FUNCTIONS (1L << 0)
@@ -279,6 +283,7 @@ void client_update_wm_hints(struct client *c)
 {
 	XWMHints *h = XGetWMHints(wm.dpy, c->win);
 	c->input = true; /* ICCCM: assume Passive when the hint is missing */
+	c->urgent = false; /* nor urgent, once the property is gone */
 	if (!h)
 		return;
 	if (h->flags & InputHint)
@@ -530,7 +535,8 @@ static void frame_to_gravity(struct client *c, int *x, int *y)
 
 void client_apply_size_hints(struct client *c, int *pw, int *ph, bool incr)
 {
-	int w = *pw, h = *ph;
+	/* Bounded first, so the arithmetic below cannot overflow. */
+	int w = MIN(*pw, X_SIZE_MAX), h = MIN(*ph, X_SIZE_MAX);
 	bool base_is_min = c->base_w == c->min_w && c->base_h == c->min_h;
 
 	/* Aspect ratios apply to the size minus the base size, unless the
@@ -559,8 +565,10 @@ void client_apply_size_hints(struct client *c, int *pw, int *ph, bool incr)
 		w = MIN(w, c->max_w);
 	if (c->max_h)
 		h = MIN(h, c->max_h);
-	*pw = MAX(w, 1);
-	*ph = MAX(h, 1);
+	/* X sizes are 16 bit; the frame around the client must fit too
+	 * (a 32-bit _NET_MOVERESIZE_WINDOW size would overflow int). */
+	*pw = MAX(MIN(w, X_SIZE_MAX - frame_extra_w(c)), 1);
+	*ph = MAX(MIN(h, X_SIZE_MAX - frame_extra_h(c)), 1);
 }
 
 /* ICCCM 4.1.5: tell the client where it is in root coordinates. */
@@ -741,7 +749,9 @@ static enum layer own_layer(struct client *c)
 {
 	if (c->type == WT_DESKTOP)
 		return LAYER_DESKTOP;
-	if (c->fullscreen && c == wm.focus)
+	/* Its own dialogs having the focus keeps it there too, or a panel
+	 * would come up over the video while its dialog is open. */
+	if (c->fullscreen && wm.focus && transient_root(wm.focus) == c)
 		return LAYER_FULLSCREEN;
 	if (c->below)
 		return LAYER_BELOW;
@@ -851,13 +861,15 @@ void client_set_active(struct client *c)
 	}
 	if (c) {
 		client_grab_buttons(c, true);
-		c->urgent = false;
+		c->urgent = c->attention = false;
 		frame_render(c);
 		ewmh_set_state(c);
 	}
 	ewmh_set_active(c);
-	/* Fullscreen windows only sit on top while focused. */
-	if ((old && old->fullscreen) || (c && c->fullscreen))
+	/* Fullscreen windows only sit on top while they or their dialogs
+	 * have the focus. */
+	if ((old && transient_root(old)->fullscreen) ||
+			(c && transient_root(c)->fullscreen))
 		restack();
 }
 
@@ -944,8 +956,10 @@ void client_grab_buttons(struct client *c, bool focused)
 	unsigned locks[] = { 0, LockMask, wm.numlock, wm.numlock | LockMask };
 
 	XUngrabButton(wm.dpy, AnyButton, AnyModifier, c->win);
-	if (!focused)
-		XGrabButton(wm.dpy, AnyButton, AnyModifier, c->win, False,
+	/* Buttons 1-3 only: scrolling a window in the background goes
+	 * straight to it and neither raises nor focuses it. */
+	for (size_t b = 0; !focused && b < LENGTH(buttons); b++)
+		XGrabButton(wm.dpy, buttons[b], AnyModifier, c->win, False,
 			ButtonPressMask | ButtonReleaseMask, GrabModeSync,
 			GrabModeSync, None, None);
 	for (size_t b = 0; b < LENGTH(buttons); b++) {
@@ -988,12 +1002,27 @@ void client_close(struct client *c)
 	}
 }
 
+/* The next request unmaps c->win: its UnmapNotify is ours, not the
+ * client withdrawing. Call right before that request. */
+void client_expect_unmap(struct client *c)
+{
+	if (!c->ignore_unmap++)
+		c->unmap_serial = NextRequest(wm.dpy);
+}
+
 static void hide(struct client *c)
 {
 	if (c->minimized)
 		return;
 	c->minimized = true;
-	c->ignore_unmap++;
+	/* An unviewable frame loses the implicit grab of a held title bar
+	 * button, so its release would never come back to us; a drag
+	 * of a window that is gone from the screen ends here as well. */
+	if (wm.grabbed == c) {
+		wm.grab_zone = SNAP_NONE;
+		end_grab();
+	}
+	client_expect_unmap(c);
 	XUnmapWindow(wm.dpy, c->win);
 	XUnmapWindow(wm.dpy, c->frame);
 	client_set_wm_state(c, IconicState);
@@ -1063,11 +1092,19 @@ static void deiconify(struct client *c)
 void client_restore(struct client *c)
 {
 	if (c->minimized) {
-		/* A dialog hidden with its main window comes back with it. */
-		struct client *r = transient_root(c);
-		if (c->hidden_with_parent && r != c && r->minimized &&
-				!r->hidden_with_parent) {
-			client_restore(r);
+		/* A dialog hidden with a window it belongs to comes back with
+		 * that one: the nearest one up the chain that was minimized
+		 * itself, which need not be the main window. */
+		struct client *a = c;
+		for (int d = 0; d < MAX_TRANSIENT_DEPTH &&
+				a->hidden_with_parent; d++) {
+			struct client *p = transient_parent(a);
+			if (!p || p == c)
+				break;
+			a = p;
+		}
+		if (a != c && a->minimized && !a->hidden_with_parent) {
+			client_restore(a);
 			return;
 		}
 		deiconify(c);
@@ -1143,6 +1180,33 @@ static bool wants_focus_on_map(struct client *c)
 	return true;
 }
 
+/* After a restart: the restore geometry and snap the previous mwm left
+ * on the window (see release), if the window is still where it was
+ * handed over. Called once its states are applied. */
+static void take_handover(struct client *c, const XWindowAttributes *wa)
+{
+	unsigned long n;
+	long *v = get_property(c->win, atoms[MWM_HANDOVER], XA_CARDINAL, &n);
+	XDeleteProperty(wm.dpy, c->win, atoms[MWM_HANDOVER]);
+	if (!v)
+		return;
+	if (n == HANDOVER_LEN && v[5] == wa->x && v[6] == wa->y &&
+			v[7] == wa->width && v[8] == wa->height &&
+			v[2] > 0 && v[3] > 0) {
+		c->saved = (struct rect){ (int)v[0], (int)v[1], (int)v[2],
+			(int)v[3] };
+		enum snap s = (enum snap)v[4];
+		/* Halves and quarters; maximized came back as a state. */
+		if (!c->fullscreen && s > SNAP_NONE && s < SNAP_MAXIMIZE) {
+			c->snap = s;
+			c->maxed_v = s == SNAP_LEFT || s == SNAP_RIGHT;
+			c->maxed_h = false;
+			ewmh_set_state(c);
+		}
+	}
+	XFree(v);
+}
+
 void client_manage(Window w, bool startup)
 {
 	XWindowAttributes wa;
@@ -1176,6 +1240,10 @@ void client_manage(Window w, bool startup)
 		c->type);
 
 	/* ---- position ---- */
+	/* Placed as the framed window it is once out of fullscreen: that
+	 * geometry is what it restores to. */
+	bool fullscreen = c->fullscreen;
+	c->fullscreen = false;
 	struct client *parent = transient_parent(c);
 	XSizeHints sh;
 	long supplied;
@@ -1204,6 +1272,7 @@ void client_manage(Window w, bool startup)
 		if (c->type != WT_DOCK && c->type != WT_DESKTOP)
 			keep_visible(c);
 	c->saved = (struct rect){ c->x, c->y, c->w, c->h };
+	c->fullscreen = fullscreen;
 
 	/* ---- frame ---- */
 	int B = frame_border(c), T = frame_title(c);
@@ -1226,7 +1295,7 @@ void client_manage(Window w, bool startup)
 	XSelectInput(wm.dpy, w, PropertyChangeMask | FocusChangeMask);
 	XSetWindowBorderWidth(wm.dpy, w, 0);
 	if (wa.map_state != IsUnmapped)
-		c->ignore_unmap++; /* reparenting unmaps it */
+		client_expect_unmap(c); /* reparenting unmaps it */
 	XReparentWindow(wm.dpy, w, c->frame, B, B + T);
 	XResizeWindow(wm.dpy, w, c->w, c->h);
 	client_grab_buttons(c, false);
@@ -1253,6 +1322,9 @@ void client_manage(Window w, bool startup)
 		frame_render(c);
 		client_send_configure(c);
 	}
+
+	if (startup)
+		take_handover(c, &wa);
 
 	XWMHints *hints = XGetWMHints(wm.dpy, w);
 	bool iconic = hints && (hints->flags & StateHint) &&
@@ -1307,6 +1379,19 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 		XSelectInput(wm.dpy, c->win, NoEventMask);
 		XReparentWindow(wm.dpy, c->win, wm.root, x, y);
 		XSetWindowBorderWidth(wm.dpy, c->win, c->old_bw);
+		if (keep_iconic && (wm.restart || wm.replaced)) {
+			/* What _NET_WM_STATE cannot say: where a maximized,
+			 * snapped or fullscreen window goes back to, and which
+			 * snap it is. Tagged with the geometry it is handed over
+			 * at, so a stale copy is recognised. */
+			long v[HANDOVER_LEN] = {
+				c->saved.x, c->saved.y, c->saved.w, c->saved.h,
+				c->snap, x, y, c->w, c->h,
+			};
+			XChangeProperty(wm.dpy, c->win, atoms[MWM_HANDOVER],
+				XA_CARDINAL, 32, PropModeReplace,
+				(unsigned char *)v, HANDOVER_LEN);
+		}
 		XRemoveFromSaveSet(wm.dpy, c->win);
 		if (keep_iconic && c->minimized) {
 			client_set_wm_state(c, IconicState);
@@ -1357,13 +1442,16 @@ void client_unmanage(struct client *c, bool destroyed)
  * survives. On restart iconic windows stay iconic for the next mwm. */
 void client_release_all(void)
 {
+	/* A restart or a new manager taking over gets the windows as they
+	 * are; only a real quit maps icons and drops the states. */
+	bool handover = wm.restart || wm.replaced;
 	while (wm.n_clients) {
 		struct client *c = wm.clients[wm.n_clients - 1];
-		if (c->minimized && !wm.restart) {
+		if (c->minimized && !handover) {
 			XMapWindow(wm.dpy, c->win);
 			c->minimized = false;
 		}
-		if (!wm.restart) {
+		if (!handover) {
 			XDeleteProperty(wm.dpy, c->win, atoms[NET_WM_STATE]);
 			XDeleteProperty(wm.dpy, c->win, atoms[NET_WM_DESKTOP]);
 		}
@@ -1378,7 +1466,16 @@ void client_release_all(void)
 void client_redecorate(struct client *c)
 {
 	client_update_decorations(c);
-	client_configure(c);
+	/* A window that fills an area keeps filling it with the new frame
+	 * (maximized, snapped or fullscreen); the free axes keep where they
+	 * are now. */
+	if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
+			c->maxed_h) {
+		save_free_axes(c);
+		client_apply_state(c);
+	} else {
+		client_configure(c);
+	}
 	ewmh_set_frame_extents(c);
 	ewmh_set_allowed_actions(c);
 }

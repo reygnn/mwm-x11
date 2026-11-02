@@ -16,6 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/wait.h>
 #include <X11/Xatom.h>
 #include <X11/Xproto.h>
 #include <X11/extensions/Xrandr.h>
@@ -25,7 +26,9 @@ struct wm wm;
 Atom atoms[ATOM_COUNT];
 
 static bool debug;
-static volatile sig_atomic_t got_signal;
+/* Separate flags, so a HUP right after a TERM cannot turn a quit into a
+ * restart; quitting wins. */
+static volatile sig_atomic_t want_quit, want_restart;
 static int signal_pipe[2] = { -1, -1 }; /* wakes up select() */
 static Atom wm_selection;
 
@@ -113,10 +116,22 @@ static int xerror_startup(Display *dpy, XErrorEvent *e)
 static void on_signal(int sig)
 {
 	int saved = errno;
-	got_signal = sig;
+	if (sig == SIGHUP)
+		want_restart = 1;
+	else
+		want_quit = 1;
 	if (write(signal_pipe[1], "", 1) < 0) {
 		/* full pipe: a wake-up is pending anyway */
 	}
+	errno = saved;
+}
+
+/* Reap every child that has exited; waitpid is async-signal-safe. */
+static void on_child(int sig)
+{
+	int saved = errno;
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+		;
 	errno = saved;
 }
 
@@ -130,11 +145,19 @@ static void setup_signals(void)
 		fcntl(signal_pipe[i], F_SETFL, O_NONBLOCK);
 		fcntl(signal_pipe[i], F_SETFD, FD_CLOEXEC);
 	}
-	struct sigaction sa = { .sa_handler = on_signal };
+	/* SA_RESTART: a signal must not cut short the waitpid in spawn(). */
+	struct sigaction sa = { .sa_handler = on_signal,
+		.sa_flags = SA_RESTART };
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGHUP, &sa, NULL);
+	/* mwm is usually exec'd by the session script, which makes it the
+	 * parent of whatever that script started in the background. */
+	struct sigaction ch = { .sa_handler = on_child,
+		.sa_flags = SA_RESTART | SA_NOCLDSTOP };
+	sigemptyset(&ch.sa_mask);
+	sigaction(SIGCHLD, &ch, NULL);
 }
 
 /* ---- startup ------------------------------------------------------------ */
@@ -328,8 +351,16 @@ static void unmap_notify(XUnmapEvent *e)
 		return;
 	}
 	if (c->ignore_unmap > 0) {
-		c->ignore_unmap--;
-		return;
+		/* Ours carries the serial of our unmap request or later. One
+		 * before it is the client unmapping the window itself just
+		 * ahead of us; our unmap then found it unmapped and sent
+		 * nothing, so nothing is left to ignore. */
+		if ((long)(e->serial - c->unmap_serial) >= 0) {
+			c->ignore_unmap--;
+			c->unmap_serial = 0; /* any later one: trust the count */
+			return;
+		}
+		c->ignore_unmap = 0;
 	}
 	client_unmanage(c, false);
 }
@@ -434,6 +465,9 @@ static void handle_event(XEvent *ev)
 	case SelectionClear:
 		if (ev->xselectionclear.selection == wm_selection) {
 			wm_log("replaced by another window manager");
+			/* Like a restart, the windows keep their state for the
+			 * next manager, only nothing is executed. */
+			wm.replaced = true;
 			wm.running = false;
 		}
 		break;
@@ -479,9 +513,11 @@ static void run(void)
 			XNextEvent(wm.dpy, &ev);
 			handle_event(&ev);
 		}
-		if (got_signal) {
-			if (got_signal == SIGHUP)
-				wm.restart = true;
+		if (want_quit) {
+			wm.restart = false;
+			wm.running = false;
+		} else if (want_restart) {
+			wm.restart = true;
 			wm.running = false;
 		}
 		if (!wm.running)
@@ -624,8 +660,17 @@ int main(int argc, char *argv[])
 	menu_close();
 	end_grab();
 	client_release_all();
-	XDeleteProperty(wm.dpy, wm.root, atoms[NET_SUPPORTING_WM_CHECK]);
-	XDeleteProperty(wm.dpy, wm.root, atoms[NET_ACTIVE_WINDOW]);
+	/* Nothing on the root may claim a manager that is gone. A new one
+	 * waits for the check window to go, so this cannot hit its own. */
+	static const enum atom_id root_props[] = {
+		NET_SUPPORTING_WM_CHECK, NET_ACTIVE_WINDOW, NET_SUPPORTED,
+		NET_CLIENT_LIST, NET_CLIENT_LIST_STACKING, NET_WORKAREA,
+		NET_NUMBER_OF_DESKTOPS, NET_CURRENT_DESKTOP,
+		NET_DESKTOP_VIEWPORT, NET_DESKTOP_NAMES, NET_DESKTOP_GEOMETRY,
+		MOTIF_WM_INFO,
+	};
+	for (size_t i = 0; i < LENGTH(root_props); i++)
+		XDeleteProperty(wm.dpy, wm.root, atoms[root_props[i]]);
 	XDestroyWindow(wm.dpy, wm.check);
 	XSync(wm.dpy, False);
 	XCloseDisplay(wm.dpy);

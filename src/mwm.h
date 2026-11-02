@@ -43,6 +43,7 @@ void wm_debug(const char *fmt, ...);
 	X(WM_CHANGE_STATE, "WM_CHANGE_STATE") \
 	X(MOTIF_WM_HINTS, "_MOTIF_WM_HINTS") \
 	X(MOTIF_WM_INFO, "_MOTIF_WM_INFO") \
+	X(MWM_HANDOVER, "_MWM_HANDOVER") \
 	X(GTK_SHOW_WINDOW_MENU, "_GTK_SHOW_WINDOW_MENU") \
 	X(NET_SUPPORTED, "_NET_SUPPORTED") \
 	X(NET_SUPPORTING_WM_CHECK, "_NET_SUPPORTING_WM_CHECK") \
@@ -132,6 +133,8 @@ struct shade {
 struct theme {
 	struct shade active;   /* focused frame */
 	struct shade inactive; /* other frames, menus, icons */
+	/* Title text set globally in mwmrc, -1 for black or white. */
+	int64_t active_fg, inactive_fg;
 	XftColor dim;          /* insensitive menu entries */
 	unsigned long root;    /* desktop background */
 	XftFont *font;
@@ -279,7 +282,9 @@ struct client {
 	bool take_focus;
 	bool delete_window;
 	bool ping;
-	bool urgent;
+	bool urgent;    /* WM_HINTS urgency */
+	bool attention; /* _NET_WM_STATE_DEMANDS_ATTENTION, kept apart from
+	                 * urgent: a WM_HINTS update must not clear it */
 	Window transient_for;
 
 	enum window_type type;
@@ -299,6 +304,7 @@ struct client {
 	bool has_strut;
 
 	int ignore_unmap; /* UnmapNotify events we caused ourselves */
+	unsigned long unmap_serial; /* request that causes the first one */
 	Cursor cursor;    /* shape currently set on the frame */
 
 	int icon_x, icon_y;
@@ -432,6 +438,7 @@ struct wm {
 	int grab_last_x, grab_last_y;
 	bool grab_detached;    /* moved past the drag threshold */
 	enum snap grab_zone;   /* snap target under the pointer */
+	struct rect grab_zone_mon; /* ... on this monitor */
 	enum snap grab_orig_snap;
 	bool grab_orig_max_v, grab_orig_max_h;
 	bool grab_outline;  /* wireframe: the window moves on release */
@@ -449,6 +456,7 @@ struct wm {
 	const char *terminal;
 	bool running;
 	bool restart;
+	bool replaced; /* another manager took over: hand state over too */
 };
 
 extern struct wm wm;
@@ -479,6 +487,7 @@ void client_snap(struct client *c, enum snap s, int px, int py);
 void client_apply_state(struct client *c);
 void client_cycle(bool backwards);
 void client_grab_buttons(struct client *c, bool focused);
+void client_expect_unmap(struct client *c);
 void client_update_title(struct client *c);
 void client_update_icon_name(struct client *c);
 void client_update_size_hints(struct client *c);
@@ -561,7 +570,7 @@ void menu_open_window(struct client *c, int x, int y);
 void menu_open_root(int x, int y);
 void menu_close(void);
 void menu_motion(int x, int y);
-void menu_button(int x, int y, bool pressed, Time time);
+void menu_button(int x, int y, unsigned button, bool pressed, Time time);
 void menu_key(KeySym sym);
 void run_action(enum action action, struct client *c);
 

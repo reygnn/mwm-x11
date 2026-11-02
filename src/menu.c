@@ -162,8 +162,14 @@ static void open_at(int x, int y)
 		XUnmapWindow(wm.dpy, m->win);
 		return;
 	}
-	XGrabKeyboard(wm.dpy, wm.root, False, GrabModeAsync, GrabModeAsync,
-		CurrentTime);
+	/* Without the keyboard Escape and the arrows would go to whoever
+	 * holds it, and only a click could close the menu. */
+	if (XGrabKeyboard(wm.dpy, wm.root, False, GrabModeAsync,
+			GrabModeAsync, CurrentTime) != GrabSuccess) {
+		XUngrabPointer(wm.dpy, CurrentTime);
+		XUnmapWindow(wm.dpy, m->win);
+		return;
+	}
 	m->open = true;
 	wm.grab = GRAB_MENU;
 }
@@ -290,9 +296,13 @@ void menu_motion(int x, int y)
 	arm(idx < 0 ? -1 : idx);
 }
 
-void menu_button(int x, int y, bool pressed, Time time)
+void menu_button(int x, int y, unsigned button, bool pressed, Time time)
 {
 	struct menu *m = &wm.menu;
+	/* A wheel tick is a press and a release; it must neither pick the
+	 * item under the pointer nor close the menu. */
+	if (button > Button3)
+		return;
 	int idx = item_at(m, x, y);
 	if (pressed) {
 		if (idx != -2) {

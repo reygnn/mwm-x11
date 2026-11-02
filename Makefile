@@ -13,10 +13,12 @@ $(error Missing build dependencies: $(strip $(MISSING)) -- see README.md for the
 endif
 endif
 
+# CFLAGS and LDLIBS stay the user's (make CFLAGS="-O0 -g" works); what
+# the build needs regardless comes in through separate variables.
 CFLAGS ?= -O2 -g
-CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit \
+MWM_CFLAGS = -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit \
 	$(shell $(PKG_CONFIG) --cflags $(PKGS))
-LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS))
+MWM_LIBS = $(shell $(PKG_CONFIG) --libs $(PKGS))
 
 SRC = src/main.c src/client.c src/config.c src/ewmh.c src/frame.c \
 	src/menu.c src/input.c src/snap.c src/draw.c \
@@ -29,10 +31,10 @@ build:
 	mkdir -p build
 
 build/%.o: src/%.c src/mwm.h | build
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(MWM_CFLAGS) $(CFLAGS) -c -o $@ $<
 
 mwm: $(OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
+	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(MWM_LIBS) $(LDLIBS)
 
 # The session file points at the installed binary, so a distribution's
 # Motif mwm in /usr/bin cannot shadow this one.

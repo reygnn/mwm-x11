@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <X11/XKBlib.h>
@@ -168,9 +169,15 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 			ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
 			GrabModeAsync, None, cur, CurrentTime) != GrabSuccess)
 		return;
-	/* Escape cancels, Return confirms, arrows nudge. */
-	XGrabKeyboard(wm.dpy, wm.root, False, GrabModeAsync, GrabModeAsync,
-		CurrentTime);
+	/* Escape cancels, Return confirms, arrows nudge. A drag with a
+	 * button held works without, a move from the menu or keyboard
+	 * does not. */
+	if (XGrabKeyboard(wm.dpy, wm.root, False, GrabModeAsync,
+			GrabModeAsync, CurrentTime) != GrabSuccess &&
+			until_click) {
+		XUngrabPointer(wm.dpy, CurrentTime);
+		return;
+	}
 
 	wm.grab = mode;
 	wm.grabbed = c;
@@ -298,8 +305,11 @@ static void process_move(int px, int py)
 	wm.grab_last_x = px;
 	wm.grab_last_y = py;
 	if (!wm.grab_detached) {
-		if (abs(px - wm.grab_px) < DRAG_THRESHOLD &&
-				abs(py - wm.grab_py) < DRAG_THRESHOLD)
+		/* From the menu or keyboard every step counts, down to the
+		 * 1 px of Shift+arrow, though not the motion of the warp to
+		 * the title; a drag needs to get going first. */
+		int t = wm.grab_until_click ? 1 : DRAG_THRESHOLD;
+		if (abs(px - wm.grab_px) < t && abs(py - wm.grab_py) < t)
 			return;
 		wm.grab_detached = true;
 		if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
@@ -315,9 +325,13 @@ static void process_move(int px, int py)
 	}
 	client_move(c, px - wm.grab_x, py - wm.grab_y);
 
+	/* The same zone on another monitor is another target. */
 	enum snap zone = snap_zone_at(c, px, py);
-	if (zone != wm.grab_zone) {
+	struct rect mon = monitor_rect_at(px, py);
+	if (zone != wm.grab_zone || (zone != SNAP_NONE &&
+			memcmp(&mon, &wm.grab_zone_mon, sizeof(mon)))) {
 		wm.grab_zone = zone;
+		wm.grab_zone_mon = mon;
 		snap_preview(zone, px, py);
 		/* Where the window goes stays visible over the snap target. */
 		outline_raise();
@@ -458,6 +472,8 @@ static void press_frame(struct client *c, XButtonEvent *e)
 		}
 		return;
 	case PART_MENU_BUTTON:
+		if (e->button != Button1 && e->button != Button3)
+			return;
 		/* The menu takes the grab; its own press handling sees the
 		 * second click of a double click and closes the window. */
 		menu_open_window(c, c->x + frame_border(c),
@@ -493,7 +509,7 @@ void handle_button_press(XButtonEvent *e)
 		XAllowEvents(wm.dpy, AsyncPointer, CurrentTime);
 	switch (wm.grab) {
 	case GRAB_MENU:
-		menu_button(e->x_root, e->y_root, true, e->time);
+		menu_button(e->x_root, e->y_root, e->button, true, e->time);
 		return;
 	case GRAB_MOVE:
 	case GRAB_RESIZE:
@@ -540,13 +556,18 @@ void handle_button_release(XButtonEvent *e)
 {
 	switch (wm.grab) {
 	case GRAB_MENU:
-		menu_button(e->x_root, e->y_root, false, e->time);
+		menu_button(e->x_root, e->y_root, e->button, false, e->time);
 		return;
 	case GRAB_MOVE:
-	case GRAB_RESIZE:
-		if (!wm.grab_until_click)
+	case GRAB_RESIZE: {
+		/* A second button pressed and released during the drag does
+		 * not end it; the button that started it does. */
+		unsigned held = e->state & (Button1Mask | Button2Mask |
+			Button3Mask) & ~(Button1Mask << (e->button - 1));
+		if (!wm.grab_until_click && !held)
 			end_grab();
 		return;
+	}
 	case GRAB_BUTTON: {
 		struct client *c = wm.grabbed;
 		if (e->button != wm.grab_button)
@@ -576,10 +597,20 @@ void handle_button_release(XButtonEvent *e)
 
 void handle_motion(XMotionEvent *e)
 {
-	/* Only the latest position matters. */
+	/* Only the latest position matters, but only up to the next other
+	 * event: a motion queued after a button release must not be
+	 * handled before it (a drop would land where the pointer went
+	 * afterwards). */
 	XEvent next;
-	while (XCheckTypedEvent(wm.dpy, MotionNotify, &next))
+	while (XEventsQueued(wm.dpy, QueuedAfterReading)) {
+		XEvent peek;
+		XPeekEvent(wm.dpy, &peek);
+		if (peek.type != MotionNotify ||
+				peek.xmotion.window != e->window)
+			break;
+		XNextEvent(wm.dpy, &next);
 		e = &next.xmotion;
+	}
 
 	switch (wm.grab) {
 	case GRAB_MOVE:

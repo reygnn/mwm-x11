@@ -177,13 +177,17 @@ void config_client_shades(struct client *c)
 	if (has_abg || has_afg) {
 		if (!has_abg)
 			abg = theme.active.bg_rgb;
-		c->active_shade = shade_get(abg, has_afg ? (int64_t)afg : -1);
+		/* Title text the program does not set itself comes from
+		 * the global entry, if there is one. */
+		c->active_shade = shade_get(abg, has_afg ? (int64_t)afg :
+			theme.active_fg);
 	}
 	if (has_abg || has_ibg || has_ifg) {
 		/* Unfocused: a paler version of the client's own colour. */
 		if (!has_ibg)
 			ibg = has_abg ? color_mix(abg, theme.inactive.bg_rgb,
 				PALE) : theme.inactive.bg_rgb;
-		c->inactive_shade = shade_get(ibg, has_ifg ? (int64_t)ifg : -1);
+		c->inactive_shade = shade_get(ibg, has_ifg ? (int64_t)ifg :
+			theme.inactive_fg);
 	}
 }
