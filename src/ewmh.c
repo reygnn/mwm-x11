@@ -32,8 +32,9 @@ enum { STATE_REMOVE, STATE_ADD, STATE_TOGGLE };
 
 /* ---- property helpers --------------------------------------------------- */
 
-/* Returns the property data (XFree it) and its item count in *n. Format 32
- * items come back as longs, as usual with Xlib. */
+/* A format-32 property (XFree the result) and its item count in *n; the
+ * items come back as longs, as usual with Xlib. Anything stored with
+ * another format is rejected, since callers index the data as longs. */
 void *get_property(Window w, Atom prop, Atom type, unsigned long *n)
 {
 	Atom real;
@@ -44,7 +45,8 @@ void *get_property(Window w, Atom prop, Atom type, unsigned long *n)
 	if (XGetWindowProperty(wm.dpy, w, prop, 0, 1L << 20, False, type,
 			&real, &format, n, &after, &data) != Success)
 		return NULL;
-	if (!data || (type != AnyPropertyType && real != type) || !*n) {
+	if (!data || (type != AnyPropertyType && real != type) ||
+			format != 32 || !*n) {
 		if (data)
 			XFree(data);
 		*n = 0;

@@ -275,6 +275,27 @@ static void unmap_notify(XUnmapEvent *e)
 	client_unmanage(c, false);
 }
 
+/* Someone else took the window (e.g. an XEmbed host). The event may also
+ * be a stale one from our own release, queued before the client mapped
+ * the window again and we framed it anew: trust only the current parent,
+ * so a frame that still holds the client is never destroyed with it. */
+static void reparent_notify(XReparentEvent *e)
+{
+	struct client *c = client_find_win(e->window);
+	if (!c || e->parent == c->frame)
+		return;
+	Window root, parent, *kids = NULL;
+	unsigned n;
+	if (!XQueryTree(wm.dpy, c->win, &root, &parent, &kids, &n))
+		return; /* gone; DestroyNotify follows */
+	if (kids)
+		XFree(kids);
+	if (parent == c->frame)
+		return;
+	XRemoveFromSaveSet(wm.dpy, c->win);
+	client_unmanage(c, true);
+}
+
 static void focus_in(XFocusChangeEvent *e)
 {
 	if (e->mode == NotifyGrab || e->mode == NotifyUngrab ||
@@ -321,15 +342,9 @@ static void handle_event(XEvent *ev)
 			client_unmanage(c, true);
 		break;
 	}
-	case ReparentNotify: {
-		/* Someone else took the window (e.g. an XEmbed host). */
-		struct client *c = client_find_win(ev->xreparent.window);
-		if (c && ev->xreparent.parent != c->frame) {
-			XRemoveFromSaveSet(wm.dpy, c->win);
-			client_unmanage(c, true);
-		}
+	case ReparentNotify:
+		reparent_notify(&ev->xreparent);
 		break;
-	}
 	case PropertyNotify:
 		client_property_notify(&ev->xproperty);
 		break;

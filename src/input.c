@@ -198,6 +198,17 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 
 void end_grab(void)
 {
+	if (wm.grab == GRAB_BUTTON) {
+		/* Only reached when the client goes away mid-press; the
+		 * implicit grab died with its frame. */
+		if (wm.grabbed) {
+			wm.grabbed->pressed = PART_NONE;
+			wm.grabbed->pressed_inside = false;
+		}
+		wm.grab = GRAB_NONE;
+		wm.grabbed = NULL;
+		return;
+	}
 	if (wm.grab != GRAB_MOVE && wm.grab != GRAB_RESIZE)
 		return;
 	struct client *c = wm.grabbed;
@@ -446,6 +457,10 @@ static void press_frame(struct client *c, XButtonEvent *e)
 
 void handle_button_press(XButtonEvent *e)
 {
+	/* A press during one of our grabs never belongs to a client; thaw
+	 * the pointer in case it came through a synchronous passive grab. */
+	if (wm.grab != GRAB_NONE)
+		XAllowEvents(wm.dpy, AsyncPointer, CurrentTime);
 	switch (wm.grab) {
 	case GRAB_MENU:
 		menu_button(e->x_root, e->y_root, true, e->time);
