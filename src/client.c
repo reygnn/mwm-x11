@@ -75,14 +75,40 @@ struct client *client_find_win(Window w)
 	return NULL;
 }
 
-static bool is_transient_of(struct client *c, struct client *parent)
-{
-	return parent && c != parent && c->transient_for == parent->win;
-}
-
 static struct client *transient_parent(struct client *c)
 {
 	return c->transient_for ? client_find_win(c->transient_for) : NULL;
+}
+
+/* WM_TRANSIENT_FOR chains come from clients and may even be cyclic, so
+ * every walk along them is bounded. */
+#define MAX_TRANSIENT_DEPTH 8
+
+/* Whether c is a dialog of ancestor, directly or through other dialogs. */
+static bool is_transient_of(struct client *c, struct client *ancestor)
+{
+	struct client *p = c;
+	for (int d = 0; d < MAX_TRANSIENT_DEPTH; d++) {
+		p = transient_parent(p);
+		if (!p || p == c)
+			return false;
+		if (p == ancestor)
+			return true;
+	}
+	return false;
+}
+
+/* The top of c's chain of dialogs: the main window it belongs to. */
+static struct client *transient_root(struct client *c)
+{
+	struct client *r = c, *p;
+	for (int d = 0; d < MAX_TRANSIENT_DEPTH; d++) {
+		p = transient_parent(r);
+		if (!p || p == c)
+			break;
+		r = p;
+	}
+	return r;
 }
 
 /* ---- monitors ----------------------------------------------------------- */
@@ -689,7 +715,7 @@ void client_set_fullscreen(struct client *c, bool fs)
 
 /* ---- stacking ----------------------------------------------------------- */
 
-static enum layer client_layer(struct client *c)
+static enum layer own_layer(struct client *c)
 {
 	if (c->type == WT_DESKTOP)
 		return LAYER_DESKTOP;
@@ -699,12 +725,18 @@ static enum layer client_layer(struct client *c)
 		return LAYER_BELOW;
 	if (c->above || c->type == WT_DOCK || c->type == WT_NOTIFICATION)
 		return LAYER_ABOVE;
-	/* Transients follow their parent into its layer. */
-	struct client *p = transient_parent(c);
-	if (p && p != c && !p->transient_for)
-		return client_layer(p) == LAYER_FULLSCREEN ? LAYER_FULLSCREEN :
-			MAX(client_layer(p), LAYER_NORMAL);
 	return LAYER_NORMAL;
+}
+
+/* Dialogs follow the main window they belong to into its layer, at
+ * least the normal one. */
+static enum layer client_layer(struct client *c)
+{
+	enum layer own = own_layer(c);
+	struct client *r = transient_root(c);
+	if (r == c)
+		return own;
+	return MAX(own, MAX(own_layer(r), LAYER_NORMAL));
 }
 
 /* Push the stacking order of wm.clients, by layer, to the server. */
@@ -814,6 +846,9 @@ void client_focus(struct client *c)
 	if (c && !focusable(c))
 		return;
 	client_set_active(c);
+	/* Many focus changes follow events without a timestamp (map,
+	 * destroy), and ICCCM wants a real one: ask the server. */
+	wm.time = server_time();
 	if (!c) {
 		XSetInputFocus(wm.dpy, wm.check, RevertToPointerRoot, wm.time);
 		return;
@@ -1003,9 +1038,11 @@ static void deiconify(struct client *c)
 void client_restore(struct client *c)
 {
 	if (c->minimized) {
-		struct client *p = transient_parent(c);
-		if (c->hidden_with_parent && p) {
-			client_restore(p);
+		/* A dialog hidden with its main window comes back with it. */
+		struct client *r = transient_root(c);
+		if (c->hidden_with_parent && r != c && r->minimized &&
+				!r->hidden_with_parent) {
+			client_restore(r);
 			return;
 		}
 		deiconify(c);
@@ -1254,11 +1291,6 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 	if (c->icon_win)
 		XDestroyWindow(wm.dpy, c->icon_win);
 	list_remove(c);
-	for (int i = 0; i < wm.n_clients; i++) {
-		if (wm.clients[i]->transient_for == c->win &&
-				wm.clients[i]->hidden_with_parent)
-			wm.clients[i]->hidden_with_parent = false;
-	}
 	free(c->title);
 	free(c->icon_name);
 }
@@ -1270,12 +1302,19 @@ void client_unmanage(struct client *c, bool destroyed)
 	bool had_strut = c->has_strut;
 	if (had_focus)
 		wm.focus = NULL;
+	/* Dialogs hidden along with this window would be unreachable now,
+	 * without an icon of their own: bring them back. */
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *t = wm.clients[i];
+		if (t->hidden_with_parent && is_transient_of(t, c))
+			show(t);
+	}
 	release(c, destroyed, false);
 	free(c);
 	if (had_strut)
 		ewmh_update_workarea();
 	ewmh_update_client_list();
-	ewmh_update_stacking();
+	restack();
 	icons_arrange();
 	if (had_focus)
 		client_focus_next(NULL);

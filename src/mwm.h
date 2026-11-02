@@ -21,6 +21,8 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 void wm_log(const char *fmt, ...);
+/* A current server timestamp (one round trip). */
+Time server_time(void);
 void wm_debug(const char *fmt, ...);
 
 /* ---- atoms -------------------------------------------------------------- */

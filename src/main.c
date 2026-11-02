@@ -84,7 +84,7 @@ static void on_signal(int sig)
 /* ---- startup ------------------------------------------------------------ */
 
 /* A real server timestamp: ICCCM forbids CurrentTime for selections. */
-static Time server_time(void)
+Time server_time(void)
 {
 	XEvent ev;
 	XSelectInput(wm.dpy, wm.check, PropertyChangeMask);
