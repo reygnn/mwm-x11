@@ -434,6 +434,8 @@ struct wm {
 	enum snap grab_zone;   /* snap target under the pointer */
 	enum snap grab_orig_snap;
 	bool grab_orig_max_v, grab_orig_max_h;
+	bool grab_outline;  /* wireframe: the window moves on release */
+	bool grab_deferred; /* geometry changed, not yet applied */
 
 	/* Double-click detection */
 	Time last_click;
@@ -545,6 +547,14 @@ enum snap snap_zone_at(struct client *c, int px, int py);
 void snap_preview(enum snap s, int px, int py);
 void snap_step(struct client *c, enum action dir);
 
+/* ---- outline.c ---------------------------------------------------------- */
+
+bool outline_wanted(void);
+void outline_show(struct client *c);
+void outline_hide(void);
+void outline_raise(void);
+bool outline_defer(struct client *c);
+
 /* ---- menu.c ------------------------------------------------------------- */
 
 void menu_open_window(struct client *c, int x, int y);
@@ -570,6 +580,7 @@ void handle_crossing(XCrossingEvent *e);
 void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	bool until_click, int px, int py);
 void end_grab(void);
+void cancel_grab(void);
 void spawn(const char *cmd);
 Cursor edge_cursor(unsigned edges);
 

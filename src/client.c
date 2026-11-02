@@ -566,15 +566,20 @@ void client_apply_size_hints(struct client *c, int *pw, int *ph, bool incr)
 /* ICCCM 4.1.5: tell the client where it is in root coordinates. */
 void client_send_configure(struct client *c)
 {
+	/* Mid wireframe drag c's geometry is the outline's; the window is
+	 * still where the drag started. */
+	struct rect g = { c->x, c->y, c->w, c->h };
+	if (wm.grab_outline && c == wm.grabbed)
+		g = wm.grab_orig;
 	XConfigureEvent ce = {
 		.type = ConfigureNotify,
 		.display = wm.dpy,
 		.event = c->win,
 		.window = c->win,
-		.x = c->x + frame_border(c),
-		.y = c->y + frame_border(c) + frame_title(c),
-		.width = c->w,
-		.height = c->h,
+		.x = g.x + frame_border(c),
+		.y = g.y + frame_border(c) + frame_title(c),
+		.width = g.w,
+		.height = g.h,
 		.border_width = 0,
 		.above = None,
 		.override_redirect = False,
@@ -584,6 +589,8 @@ void client_send_configure(struct client *c)
 
 void client_configure(struct client *c)
 {
+	if (outline_defer(c))
+		return;
 	int B = frame_border(c), T = frame_title(c);
 	XMoveResizeWindow(wm.dpy, c->frame, c->x, c->y, c->w + 2 * B,
 		c->h + 2 * B + T);
@@ -596,6 +603,8 @@ void client_move(struct client *c, int x, int y)
 {
 	c->x = x;
 	c->y = y;
+	if (outline_defer(c))
+		return;
 	XMoveWindow(wm.dpy, c->frame, x, y);
 	client_send_configure(c);
 }
@@ -1275,8 +1284,16 @@ void client_manage(Window w, bool startup)
 static void release(struct client *c, bool destroyed, bool keep_iconic)
 {
 	if (wm.grabbed == c) {
-		wm.grab_zone = SNAP_NONE;
-		end_grab();
+		if (!destroyed && wm.grab_outline) {
+			/* Mid wireframe drag the window has not moved yet: it
+			 * leaves from where it is seen, not from the outline. */
+			cancel_grab();
+		} else {
+			/* Gone: no outline geometry to apply any more. */
+			wm.grab_zone = SNAP_NONE;
+			wm.grab_deferred = false;
+			end_grab();
+		}
 	}
 	if (wm.menu.target == c)
 		menu_close();
@@ -1408,6 +1425,10 @@ void client_configure_request(XConfigureRequestEvent *e)
 		if (c->maxed_h || c->maxed_v)
 			save_free_axes(c);
 		client_configure(c);
+		/* Mid wireframe drag that only moved the outline; the request
+		 * is still owed an answer now (ICCCM 4.1.5). */
+		if (wm.grab_outline && c == wm.grabbed)
+			client_send_configure(c);
 	} else {
 		/* Denied or nothing to do: still confirm the geometry. */
 		client_send_configure(c);

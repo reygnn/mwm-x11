@@ -78,6 +78,14 @@ windows.
 | Desktop            | btn1/btn3: root menu                                |
 | Alt + btn1/2/3     | move / lower / resize anywhere in the window        |
 
+## Moving and resizing
+
+As in Motif mwm (`moveOpaque: False`) and twm, a window being moved or
+resized is shown as an outline that follows the pointer; the window itself
+moves and resizes once, when you let go. Over xrdp or VNC that sends a few
+lines per pointer motion instead of the whole window. For opaque dragging
+put `Mwm*moveOpaque: true` in mwmrc or set `MWM_MOVE_OPAQUE=1`.
+
 ## Snapping (as in Windows 11)
 
 Drag a window by its title (or with Alt+btn1) until the pointer touches a
@@ -135,6 +143,7 @@ Mwm*fontList:                  Sans:bold:size=10
 | `activeForeground`, `foreground` | title text; default is black or white, whichever contrasts |
 | `fontList` | fontconfig pattern for titles and menus (global only) |
 | `rootBackground` | desktop colour (global only) |
+| `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
 
 A program with its own `activeBackground` keeps its colour when unfocused,
 in a paler shade (mixed with the global `background`), and so does its
@@ -152,4 +161,5 @@ The environment overrides the global entries:
 | `MWM_INACTIVE`    | `#aeb2c3`           | other frames, menus, icons        |
 | `MWM_ROOT`        | `#5b7792`           | desktop colour                    |
 | `MWM_FONT`        | `Sans:bold:size=10` | fontconfig pattern                |
+| `MWM_MOVE_OPAQUE` | `0`                 | `1`: opaque move/resize           |
 | `MWM_TERMINAL`    | first of xterm, uxterm, x-terminal-emulator, … | "New Window" |

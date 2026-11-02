@@ -126,6 +126,10 @@ void frame_render(struct client *c)
 	const int B = frame_border(c), T = frame_title(c);
 	if (!B && !T)
 		return; /* the client covers the whole frame */
+	/* Mid wireframe drag c->w/h are the outline's, not the frame's;
+	 * end_grab renders once the frame has them. */
+	if (wm.grab_deferred && c == wm.grabbed)
+		return;
 
 	const int W = c->w + 2 * B, H = c->h + 2 * B + T;
 	const int bv = MIN(theme.bevel, B);

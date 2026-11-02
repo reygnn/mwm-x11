@@ -1,6 +1,7 @@
 /*
  * Pointer and keyboard handling: frame interaction, interactive move and
- * resize with mwm's feedback box, and mwm's default key bindings.
+ * resize with mwm's feedback box (as an outline by default, see
+ * outline.c), and mwm's default key bindings.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -184,6 +185,12 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	wm.grab_detached = false;
 	wm.grab_zone = SNAP_NONE;
 	wm.grab_box = client_box(c);
+	wm.grab_outline = outline_wanted();
+	wm.grab_deferred = false;
+	/* From the menu or keyboard there is no press to drag from yet;
+	 * show where the window is. A drag shows it on the first motion. */
+	if (wm.grab_outline && until_click)
+		outline_show(c);
 	if (mode == GRAB_MOVE) {
 		wm.grab_x = px - c->x;
 		wm.grab_y = py - c->y;
@@ -212,13 +219,20 @@ void end_grab(void)
 		return;
 	struct client *c = wm.grabbed;
 	enum snap zone = wm.grab == GRAB_MOVE ? wm.grab_zone : SNAP_NONE;
+	bool deferred = wm.grab_outline && wm.grab_deferred;
 	wm.grab = GRAB_NONE;
 	wm.grabbed = NULL;
 	wm.grab_zone = SNAP_NONE;
+	wm.grab_outline = wm.grab_deferred = false;
 	XUngrabPointer(wm.dpy, CurrentTime);
 	XUngrabKeyboard(wm.dpy, CurrentTime);
 	feedback_hide();
 	snap_preview(SNAP_NONE, 0, 0);
+	outline_hide();
+	/* Wireframe: now the window itself goes where the outline was. A
+	 * snap below configures it anyway. */
+	if (c && deferred && zone == SNAP_NONE)
+		client_configure(c);
 	if (c && zone != SNAP_NONE) {
 		/* Restoring later brings it back to where it was before this
 		 * drag, not to the screen edge it was dropped on. */
@@ -259,7 +273,7 @@ void end_grab(void)
 	}
 }
 
-static void cancel_grab(void)
+void cancel_grab(void)
 {
 	struct client *c = wm.grabbed;
 	struct rect o = wm.grab_orig;
@@ -305,6 +319,8 @@ static void process_move(int px, int py)
 	if (zone != wm.grab_zone) {
 		wm.grab_zone = zone;
 		snap_preview(zone, px, py);
+		/* Where the window goes stays visible over the snap target. */
+		outline_raise();
 	}
 	update_feedback();
 }
