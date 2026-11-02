@@ -258,9 +258,11 @@ void ewmh_set_state(struct client *c)
 		s[n++] = atoms[NET_WM_STATE_MODAL];
 	if (c->sticky)
 		s[n++] = atoms[NET_WM_STATE_STICKY];
-	if (c->maxed_v)
+	/* A tiled window keeps a maximized state for later but is not
+	 * maximized now. */
+	if (c->maxed_v && !c->tiled)
 		s[n++] = atoms[NET_WM_STATE_MAXIMIZED_VERT];
-	if (c->maxed_h)
+	if (c->maxed_h && !c->tiled)
 		s[n++] = atoms[NET_WM_STATE_MAXIMIZED_HORZ];
 	if (c->skip_taskbar)
 		s[n++] = atoms[NET_WM_STATE_SKIP_TASKBAR];

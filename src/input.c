@@ -454,7 +454,13 @@ static void press_frame(struct client *c, XButtonEvent *e)
 	enum frame_part part = e->subwindow == c->win ? PART_CLIENT :
 		frame_hit(c, e->x, e->y, &edges);
 
+	/* A click on a shaded window unrolls it (activating does), and
+	 * does no more, so its minimize button does not roll it right up
+	 * again; only maximize goes on to make it the main window. */
+	bool was_shaded = tile_shaded(c);
 	client_activate(c);
+	if (was_shaded && part != PART_MAXIMIZE_BUTTON)
+		return;
 	switch (part) {
 	case PART_CLIENT:
 	case PART_NONE:

@@ -26,17 +26,24 @@
 #define TILE_GAP 8         /* px around and between windows */
 #define TILE_MAIN_PCT 55   /* share of the width for the main window */
 
+/* Normal top-level windows that may be resized; nofit ones (their
+ * minimum size does not fit their cell) float for this round. */
 static bool tileable(struct client *c)
 {
 	return c->type == WT_NORMAL && !c->minimized && !c->fullscreen &&
-		!c->fixed && !transient_parent(c);
+		!c->fixed && (c->base_funcs & FUNC_RESIZE) &&
+		!transient_parent(c) && !c->tile_nofit;
 }
 
+/* Layout order; ties (possible right after a restart) by management
+ * order, so the layout does not change with the stacking order. */
 static int by_seq(const void *a, const void *b)
 {
 	const struct client *x = *(struct client *const *)a;
 	const struct client *y = *(struct client *const *)b;
-	return (x->tile_seq > y->tile_seq) - (x->tile_seq < y->tile_seq);
+	if (x->tile_seq != y->tile_seq)
+		return x->tile_seq < y->tile_seq ? -1 : 1;
+	return (x->serial > y->serial) - (x->serial < y->serial);
 }
 
 /* The tiled windows in layout order, main window first; *n of them.
@@ -52,64 +59,151 @@ static struct client **tiled_windows(int *n)
 	return v;
 }
 
-static void publish(void)
+/* Before the windows are adopted: a restart keeps what the last mwm had
+ * (tile_handover left it on the root), otherwise the environment and
+ * mwmrc decide. The property is gone afterwards either way, so nothing
+ * stale is left for a later mwm. */
+void tile_init(void)
+{
+	long on;
+	int v;
+	bool restarted = getenv("MWM_RESTARTED") &&
+		get_cardinal(wm.root, atoms[MWM_TILING], &on);
+	XDeleteProperty(wm.dpy, wm.root, atoms[MWM_TILING]);
+	if (restarted)
+		wm.tiling = on != 0;
+	else if ((v = config_bool("MWM_TILING", getenv("MWM_TILING"))) >= 0)
+		wm.tiling = v;
+	else
+		wm.tiling = config_bool("tiling", config_get("tiling")) == 1;
+}
+
+/* On restart: the mode for the next mwm. */
+void tile_handover(void)
 {
 	long on = wm.tiling;
 	XChangeProperty(wm.dpy, wm.root, atoms[MWM_TILING], XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)&on, 1);
 }
 
-/* Before the windows are adopted: a restart (or a new mwm taking over)
- * keeps what the last one had, otherwise the environment and mwmrc. */
-void tile_init(void)
-{
-	long on;
-	int v;
-	if (get_cardinal(wm.root, atoms[MWM_TILING], &on))
-		wm.tiling = on != 0;
-	else if ((v = config_bool("MWM_TILING", getenv("MWM_TILING"))) >= 0)
-		wm.tiling = v;
-	else
-		wm.tiling = config_bool("tiling", config_get("tiling")) == 1;
-	publish();
-}
-
 void tile_toggle(void)
 {
 	wm.tiling = !wm.tiling;
-	publish();
 	tile_arrange();
 }
 
+bool tile_can_shade(struct client *c)
+{
+	return frame_title(c) > 0;
+}
+
+/* Smallest frame c can have, from its size hints. */
+static void min_frame(struct client *c, int *w, int *h)
+{
+	int cw = 1, ch = 1;
+	client_apply_size_hints(c, &cw, &ch, true);
+	*w = cw + frame_extra_w(c);
+	*h = ch + frame_extra_h(c);
+}
+
 /* Lay out the stack windows v[0..k) in the column at x, width w: shaded
- * ones take their title bar, the others share what is left. */
-static void layout_stack(struct client **v, int k, struct rect a, int x,
+ * ones take their title bar, the open ones share what is left. When
+ * that is too little for them, open ones from the bottom up are shaded
+ * (the focused one last). Returns false if the column still cannot
+ * hold them. */
+static bool layout_stack(struct client **v, int k, struct rect a, int x,
 	int w)
 {
-	int shaded = 0, n_open = 0;
-	for (int i = 0; i < k; i++) {
-		if (v[i]->shaded)
-			shaded += frame_extra_h(v[i]);
-		else
-			n_open++;
-	}
-	int room = a.h - 2 * TILE_GAP - (k - 1) * TILE_GAP - shaded;
-	int each = n_open ? room / n_open : 0;
-	int y = a.y + TILE_GAP, open_left = n_open;
-	for (int i = 0; i < k; i++) {
-		struct client *c = v[i];
-		int h;
-		if (c->shaded) {
-			h = frame_extra_h(c);
-		} else {
-			/* The last open window takes the remainder. */
-			h = --open_left ? each : room - each * (n_open - 1);
-			h = MAX(h, frame_extra_h(c) + 1);
+	for (;;) {
+		int shaded = 0, n_open = 0, need = 0;
+		for (int i = 0; i < k; i++) {
+			int mw, mh;
+			min_frame(v[i], &mw, &mh);
+			if (v[i]->shaded) {
+				shaded += frame_extra_h(v[i]);
+			} else {
+				n_open++;
+				need = MAX(need, mh);
+			}
 		}
-		c->tile = (struct rect){ x, y, w, h };
-		c->tile_main = false;
-		y += h + TILE_GAP;
+		int room = a.h - 2 * TILE_GAP - (k - 1) * TILE_GAP - shaded;
+		int each = n_open ? room / n_open : 0;
+		if (n_open && each < need) {
+			/* Shade one more, if any can be. */
+			struct client *pick = NULL;
+			for (int i = k - 1; i >= 0 && !pick; i--)
+				if (!v[i]->shaded && tile_can_shade(v[i]) &&
+						v[i] != wm.focus)
+					pick = v[i];
+			for (int i = k - 1; i >= 0 && !pick; i--)
+				if (!v[i]->shaded && tile_can_shade(v[i]))
+					pick = v[i];
+			if (pick) {
+				pick->shaded = true;
+				continue;
+			}
+		}
+		if (room < 0 || (n_open && each < need))
+			return false;
+		int y = a.y + TILE_GAP, open_left = n_open;
+		for (int i = 0; i < k; i++) {
+			struct client *c = v[i];
+			int h = frame_extra_h(c);
+			if (!c->shaded) /* the last open one gets the rest */
+				h = --open_left ? each :
+					room - each * (n_open - 1);
+			c->tile = (struct rect){ x, y, w, h };
+			c->tile_main = false;
+			y += h + TILE_GAP;
+		}
+		return true;
 	}
+}
+
+/* Cells for v[0..n), main window first. Returns a window that cannot
+ * fit its cell, or NULL; *overflow says the stack column is full even
+ * with every window in it shaded. */
+static struct client *plan(struct client **v, int n, bool *overflow)
+{
+	*overflow = false;
+	struct rect a = monitor_usable_at(wm.mon[0].x, wm.mon[0].y);
+	/* Icons along the bottom stay in view: the layout ends above the
+	 * highest row of them (they keep their own 8 px margin). */
+	int bottom = a.y + a.h;
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *c = wm.clients[i];
+		if (c->minimized && c->icon_win && !c->hidden_with_parent &&
+				c->icon_placed && c->icon_x >= a.x &&
+				c->icon_x < a.x + a.w && c->icon_y >= a.y &&
+				c->icon_y < bottom)
+			bottom = c->icon_y;
+	}
+	a.h = MAX(bottom - a.y, 2 * TILE_GAP + 1);
+	int top = a.y + TILE_GAP, h = a.h - 2 * TILE_GAP;
+	/* The main window is never shaded. */
+	v[0]->shaded = false;
+	if (n == 1) {
+		v[0]->tile = (struct rect){ a.x + TILE_GAP, top,
+			a.w - 2 * TILE_GAP, h };
+	} else {
+		int inner = a.w - 3 * TILE_GAP;
+		int mw = inner * TILE_MAIN_PCT / 100, sw = inner - mw;
+		v[0]->tile = (struct rect){ a.x + 2 * TILE_GAP + sw, top,
+			mw, h };
+		if (!layout_stack(v + 1, n - 1, a, a.x + TILE_GAP, sw)) {
+			*overflow = true;
+			return v[n - 1];
+		}
+	}
+	v[0]->tile_main = true;
+	for (int i = 0; i < n; i++) {
+		int mw, mh;
+		min_frame(v[i], &mw, &mh);
+		if (mw > v[i]->tile.w ||
+				(!v[i]->shaded && mh > v[i]->tile.h))
+			return v[i];
+	}
+	return NULL;
 }
 
 void tile_arrange(void)
@@ -121,35 +215,38 @@ void tile_arrange(void)
 		return;
 	busy = true;
 
-	for (int i = 0; i < wm.n_clients; i++) {
-		struct client *c = wm.clients[i];
-		bool want = wm.tiling && tileable(c);
-		if (want != c->tiled)
-			client_set_tiled(c, want, true);
-	}
-
-	int n;
-	struct client **v = tiled_windows(&n);
-	if (n) {
-		struct rect a = monitor_usable_at(wm.mon[0].x, wm.mon[0].y);
-		int top = a.y + TILE_GAP, h = a.h - 2 * TILE_GAP;
-		if (n == 1) {
-			v[0]->tile = (struct rect){ a.x + TILE_GAP, top,
-				a.w - 2 * TILE_GAP, h };
-		} else {
-			int inner = a.w - 3 * TILE_GAP;
-			int mw = inner * TILE_MAIN_PCT / 100, sw = inner - mw;
-			v[0]->tile = (struct rect){ a.x + 2 * TILE_GAP + sw,
-				top, mw, h };
-			layout_stack(v + 1, n - 1, a, a.x + TILE_GAP, sw);
+	for (int i = 0; i < wm.n_clients; i++)
+		wm.clients[i]->tile_nofit = false;
+	for (;;) {
+		for (int i = 0; i < wm.n_clients; i++) {
+			struct client *c = wm.clients[i];
+			bool want = wm.tiling && tileable(c);
+			if (want != c->tiled)
+				client_set_tiled(c, want, true);
 		}
-		/* The main window is never shaded. */
-		v[0]->tile_main = true;
-		v[0]->shaded = false;
+		int n;
+		struct client **v = tiled_windows(&n);
+		bool overflow;
+		struct client *misfit = n ? plan(v, n, &overflow) : NULL;
+		if (misfit && overflow) {
+			/* No room even rolled up: the oldest one becomes an
+			 * icon, still in reach, and the newest when restored. */
+			free(v);
+			client_minimize(misfit);
+			continue;
+		}
+		if (misfit) {
+			/* Too large for its cell: it floats, and the others
+			 * share its room. */
+			misfit->tile_nofit = true;
+			free(v);
+			continue;
+		}
 		for (int i = 0; i < n; i++)
 			client_apply_state(v[i]);
+		free(v);
+		break;
 	}
-	free(v);
 	busy = false;
 }
 
@@ -181,8 +278,13 @@ void tile_iconify(struct client *c)
 	if (!c->tiled)
 		return;
 	if (!c->tile_main) {
+		if (!tile_can_shade(c))
+			return; /* no title bar to roll up to */
 		c->shaded = !c->shaded;
 		tile_arrange();
+		/* Nothing to type into any more. */
+		if (c->shaded && wm.focus == c)
+			client_focus_next(c);
 		return;
 	}
 	int n;

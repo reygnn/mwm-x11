@@ -197,7 +197,8 @@ void menu_open_window(struct client *c, int x, int y)
 		add(m, "Move", 'M', "Alt+F7", ACT_MOVE, false);
 		add(m, "Size", 'S', "Alt+F8", ACT_SIZE, false);
 		add(m, "Minimize", 'n', "Alt+F9", ACT_MINIMIZE,
-			(f & FUNC_MINIMIZE) && (!main || tile_has_stack()));
+			(f & FUNC_MINIMIZE) && (main ? tile_has_stack() :
+			tile_can_shade(c)));
 		add(m, "Maximize", 'x', "Alt+F10", ACT_MAXIMIZE,
 			(f & FUNC_MAXIMIZE) && !main);
 		add(m, "Lower", 'L', "Alt+F3", ACT_LOWER, true);
@@ -233,7 +234,8 @@ void menu_open_root(int x, int y)
 	add(m, "Shuffle Up", 'U', NULL, ACT_SHUFFLE_UP, true);
 	add(m, "Shuffle Down", 'D', NULL, ACT_SHUFFLE_DOWN, true);
 	add(m, "Refresh", 'f', NULL, ACT_REFRESH, true);
-	add(m, wm.tiling ? "Untile Windows" : "Tile Windows", 'T', "Super+T",
+	add(m, wm.tiling ? "Untile Windows" : "Tile Windows",
+		wm.tiling ? 't' : 'T', "Super+T",
 		ACT_TOGGLE_TILING, true);
 	add(m, NULL, 0, NULL, ACT_NONE, false);
 	add(m, "Restart...", 'R', NULL, ACT_RESTART_CONFIRM, true);

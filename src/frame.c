@@ -53,7 +53,7 @@ int frame_extra_h(struct client *c)
 /* Outer frame height; a shaded window keeps only its title bar. */
 int frame_height(struct client *c)
 {
-	return c->shaded ? frame_extra_h(c) : c->h + frame_extra_h(c);
+	return tile_shaded(c) ? frame_extra_h(c) : c->h + frame_extra_h(c);
 }
 
 /* Horizontal title bar layout; button positions are -1 when absent. */
@@ -120,7 +120,7 @@ static void draw_button(struct canvas *cv, struct client *c,
 	case PART_MAXIMIZE_BUTTON:
 		g = size * 11 / 20;
 		draw_bevel(cv, x + (size - g) / 2, y + (size - g) / 2,
-			g, g, 1, s, c->maxed_v && c->maxed_h);
+			g, g, 1, s, c->maxed_v && c->maxed_h && !c->tiled);
 		break;
 	default:
 		break;
@@ -149,7 +149,7 @@ void frame_render(struct client *c)
 	const int W = c->w + 2 * B, H = frame_height(c);
 	const int bv = MIN(theme.bevel, B);
 	const bool full = B == theme.border;
-	const bool maximized = c->maxed_v && c->maxed_h;
+	const bool maximized = c->maxed_v && c->maxed_h && !c->tiled;
 	const struct shade *s = c == wm.focus ? c->active_shade :
 		c->inactive_shade;
 

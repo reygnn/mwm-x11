@@ -111,25 +111,29 @@ maximized window back to normal, and from a normal window to its icon.
 ## Tiling
 
 Super+T, or "Tile Windows" in the root menu, switches to tiling: the main
-window takes the right part of the screen (55 %), the other windows share
-the left part, one above the other. Gaps around and between them keep the
-desktop and its root menu within reach. A new window, or one back from an
-icon, becomes the main window.
+window takes the right part of the screen (55 %; all of it while it is
+the only one), the other windows share the left part, one above the
+other. Gaps around and between them keep the desktop and its root menu
+within reach. A new window, or one back from an icon, becomes the main
+window.
 
 The decoration stays, but tiled windows cannot be moved or resized. The
 title bar buttons do this instead:
 
 | Button   | Main window (right)              | Stack window (left)            |
 |----------|----------------------------------|--------------------------------|
-| Minimize | goes into the stack; the top stack window takes its place | shades: rolls up to its title bar, or unrolls |
+| Minimize | goes into the stack; the top stack window takes its place (nothing while it is alone) | shades: rolls up to its title bar |
 | Maximize | nothing                          | becomes the main window        |
 
-Restore (Alt+F5) unrolls a shaded window. Dialogs, windows of a fixed
-size, fullscreen and minimized windows float as usual; a window that goes
-fullscreen returns to its place afterwards. The layout covers the primary
-monitor. Switching tiling off puts every window back where it was.
-`Mwm*tiling: true` in mwmrc or `MWM_TILING=1` starts with tiling on, and
-a restart keeps the current choice.
+A click on a shaded window, focusing it (Alt+Tab, a taskbar) or Restore
+(Alt+F5) unrolls it. When the stack runs out of room, its lower windows
+are shaded, and when even that is not enough the oldest become icons. The layout
+ends above the row of icons. Dialogs, windows that cannot be resized, windows too large
+for their place, fullscreen and minimized windows float as usual; a
+window that leaves fullscreen joins the layout. The layout covers the
+primary monitor. Switching tiling off puts every window back where it
+was. `Mwm*tiling: true` in mwmrc or `MWM_TILING=1` starts with tiling on,
+and a restart keeps the current choice.
 
 ## Keys (mwm defaults)
 

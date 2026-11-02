@@ -488,8 +488,19 @@ screen_changed:
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
-		if (c->tiled)
-			continue; /* laid out anew below */
+		if (c->tiled) {
+			/* Laid out anew below; where it floats once tiling
+			 * is off must still be on a monitor. */
+			struct rect s = c->saved;
+			struct rect m = monitor_usable_at(s.x + s.w / 2,
+				s.y + s.h / 2);
+			if (s.x >= m.x + m.w || s.y >= m.y + m.h ||
+					s.x + s.w <= m.x || s.y + s.h <= m.y) {
+				c->saved.x = m.x + 32;
+				c->saved.y = m.y + 32;
+			}
+			continue;
+		}
 		if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
 				c->maxed_h) {
 			client_apply_state(c);
@@ -675,10 +686,8 @@ int main(int argc, char *argv[])
 	};
 	for (size_t i = 0; i < LENGTH(root_props); i++)
 		XDeleteProperty(wm.dpy, wm.root, atoms[root_props[i]]);
-	/* Tiling on or off carries over to the next mwm, not to the next
-	 * session. */
-	if (!wm.restart && !wm.replaced)
-		XDeleteProperty(wm.dpy, wm.root, atoms[MWM_TILING]);
+	if (wm.restart)
+		tile_handover();
 	XDestroyWindow(wm.dpy, wm.check);
 	XSync(wm.dpy, False);
 	XCloseDisplay(wm.dpy);

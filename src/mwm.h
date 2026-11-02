@@ -292,6 +292,7 @@ struct client {
 	long mwm_flags, mwm_funcs, mwm_decor; /* raw _MOTIF_WM_HINTS */
 	unsigned decor; /* effective decorations */
 	unsigned funcs; /* effective functions */
+	unsigned base_funcs; /* the same, before tiling takes some away */
 
 	bool minimized;
 	bool hidden_with_parent; /* minimized along with its transient_for */
@@ -307,6 +308,7 @@ struct client {
 	bool tile_main;  /* the main window on the right */
 	bool shaded;     /* in the stack, rolled up to its title bar */
 	bool tile_back;  /* fullscreen from the layout: back into it after */
+	bool tile_nofit; /* this round: too big for its cell, floats */
 	long tile_seq;   /* layout order, lowest first (the main window) */
 	struct rect tile; /* its cell, frame coordinates */
 
@@ -576,6 +578,7 @@ void snap_step(struct client *c, enum action dir);
 /* ---- tile.c ------------------------------------------------------------- */
 
 void tile_init(void);
+void tile_handover(void);
 void tile_toggle(void);
 void tile_arrange(void);
 bool tile_is_main(struct client *c);
@@ -583,6 +586,12 @@ bool tile_has_stack(void);
 void tile_iconify(struct client *c);
 void tile_promote(struct client *c);
 void tile_unshade(struct client *c);
+bool tile_can_shade(struct client *c);
+/* Rolled up to the title bar: only in the layout, only with a title. */
+static inline bool tile_shaded(struct client *c)
+{
+	return c->shaded && c->tiled && frame_title(c) > 0;
+}
 
 /* ---- outline.c ---------------------------------------------------------- */
 

@@ -15,6 +15,7 @@
 /* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h,
  * then tile_seq and the tiling flags. */
 #define HANDOVER_LEN 11
+#define HANDOVER_BASE_LEN 9
 #define HANDOVER_TILED  1
 #define HANDOVER_SHADED 2
 /* Largest window size the X protocol can carry. */
@@ -430,6 +431,7 @@ void client_update_decorations(struct client *c)
 		d &= ~DECOR_MAXIMIZE;
 	/* Tiled: the full decoration stays, only moving and resizing do
 	 * nothing; the layout places the window. */
+	c->base_funcs = f;
 	if (c->tiled)
 		f &= ~(FUNC_MOVE | FUNC_RESIZE);
 	c->decor = d;
@@ -617,7 +619,10 @@ void client_configure(struct client *c)
 	int B = frame_border(c), T = frame_title(c);
 	XMoveResizeWindow(wm.dpy, c->frame, c->x, c->y, c->w + 2 * B,
 		frame_height(c));
-	XMoveResizeWindow(wm.dpy, c->win, B, B + T, c->w, c->h);
+	/* Shaded: the client keeps its size but sits below the frame's
+	 * edge, so none of it covers the bottom border. */
+	XMoveResizeWindow(wm.dpy, c->win, B, tile_shaded(c) ? frame_height(c) :
+		B + T, c->w, c->h);
 	frame_render(c);
 	client_send_configure(c);
 }
@@ -644,7 +649,7 @@ static void apply_state_geometry_at(struct client *c, int cx, int cy)
 		int w = r.w - frame_extra_w(c), h = r.h - frame_extra_h(c);
 		client_apply_size_hints(c, &w, &h, true);
 		c->w = w;
-		if (!c->shaded)
+		if (!tile_shaded(c))
 			c->h = h;
 		c->x = c->tile_main ? r.x + r.w - (w + frame_extra_w(c)) : r.x;
 		c->y = r.y;
@@ -786,8 +791,9 @@ void client_set_fullscreen(struct client *c, bool fs)
 	ewmh_set_frame_extents(c);
 	ewmh_set_state(c);
 	restack();
-	if (fs)
-		tile_arrange(); /* the others close the gap */
+	/* Into fullscreen the others close the gap; out of it a window
+	 * fit for the layout joins it, wherever it came from. */
+	tile_arrange();
 }
 
 /* Into the layout or out of it. In: saved takes the floating geometry,
@@ -807,8 +813,11 @@ void client_set_tiled(struct client *c, bool on, bool apply)
 	c->tile_main = false;
 	client_update_decorations(c);
 	ewmh_set_allowed_actions(c);
+	ewmh_set_state(c); /* maximized or snapped is kept, not shown */
+	/* Back on the monitor it came from, not the one of its cell. */
 	if (!on && apply)
-		client_apply_state(c);
+		apply_state_geometry_at(c, c->saved.x + c->saved.w / 2,
+			c->saved.y + c->saved.h / 2);
 }
 
 /* ---- stacking ----------------------------------------------------------- */
@@ -975,6 +984,10 @@ void client_activate(struct client *c)
 		client_restore(c);
 	client_raise(c);
 	client_focus(c);
+	/* Typing into a window that cannot be seen helps no one. Focused
+	 * first, so a full stack shades another one to make room. */
+	if (c->shaded)
+		tile_unshade(c);
 }
 
 void client_focus_next(struct client *except)
@@ -985,9 +998,10 @@ void client_focus_next(struct client *except)
 		client_focus(p);
 		return;
 	}
+	/* A shaded window only gets the focus when asked for by name. */
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
-		if (c != except && focusable(c)) {
+		if (c != except && focusable(c) && !tile_shaded(c)) {
 			client_focus(c);
 			return;
 		}
@@ -1264,7 +1278,8 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 	XDeleteProperty(wm.dpy, c->win, atoms[MWM_HANDOVER]);
 	if (!v)
 		return;
-	if (n == HANDOVER_LEN && v[5] == wa->x && v[6] == wa->y &&
+	/* Nine fields come from an mwm before tiling; still good. */
+	if (n >= HANDOVER_BASE_LEN && v[5] == wa->x && v[6] == wa->y &&
 			v[7] == wa->width && v[8] == wa->height &&
 			v[2] > 0 && v[3] > 0) {
 		c->saved = (struct rect){ (int)v[0], (int)v[1], (int)v[2],
@@ -1279,12 +1294,19 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 		}
 		/* Its place in the layout; saved already is its floating
 		 * geometry, so it goes back in without saving again. */
-		c->tile_seq = v[9];
-		wm.tile_front = MIN(wm.tile_front, v[9]);
-		if (v[10] & HANDOVER_TILED) {
-			c->tile_back = true;
-			c->shaded = !c->fullscreen &&
-				(v[10] & HANDOVER_SHADED);
+		if (n >= HANDOVER_LEN) {
+			c->tile_seq = v[9];
+			wm.tile_front = MIN(wm.tile_front, v[9]);
+			if ((v[10] & HANDOVER_TILED) && wm.tiling) {
+				c->tile_back = true;
+				c->shaded = !c->fullscreen &&
+					(v[10] & HANDOVER_SHADED);
+			} else if ((v[10] & HANDOVER_TILED) &&
+					!c->fullscreen) {
+				/* A new mwm without tiling: back to where
+				 * it floated. */
+				client_apply_state(c);
+			}
 		}
 	}
 	XFree(v);
@@ -1466,6 +1488,12 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 		XReparentWindow(wm.dpy, c->win, wm.root, x, y);
 		XSetWindowBorderWidth(wm.dpy, c->win, c->old_bw);
 		if (keep_iconic && (wm.restart || wm.replaced)) {
+			/* The next mwm learns maximized from _NET_WM_STATE,
+			 * which a tiled window does not show. */
+			bool tiled = c->tiled;
+			c->tiled = false;
+			ewmh_set_state(c);
+			c->tiled = tiled;
 			/* What _NET_WM_STATE cannot say: where a maximized,
 			 * snapped or fullscreen window goes back to, and which
 			 * snap it is. Tagged with the geometry it is handed over
@@ -1671,6 +1699,8 @@ void client_property_notify(XPropertyEvent *e)
 		client_update_size_hints(c);
 		if (fixed != c->fixed)
 			client_redecorate(c);
+		else if (c->tiled)
+			tile_arrange(); /* new increments or minimum */
 	} else if (a == XA_WM_HINTS) {
 		client_update_wm_hints(c);
 		ewmh_set_state(c);
