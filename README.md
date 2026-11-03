@@ -71,7 +71,7 @@ windows.
 
 `tests/docker/run.sh` builds mwm in Docker and walks through tiling under
 Xvfb with xterm and xdotool (`filter` covers DoNotTile/TileOnly and raising
-or lowering the tiled windows), logging window geometry and taking
+or lowering the tiled windows, `width` the main window's width), logging window geometry and taking
 screenshots into `tests/docker/out/`.
 
 ## Mouse
@@ -118,8 +118,8 @@ maximized window back to normal, and from a normal window to its icon.
 ## Tiling
 
 Super+T, or "Tile Windows" in the root menu, switches to tiling: the main
-window takes the right part of the screen (55 %; all of it while it is
-the only one), the other windows share the left part, one above the
+window takes the right part of the screen (55 %, or `Mwm*tileMainWidth`;
+all of it while it is the only one), the other windows share the left part, one above the
 other. Gaps around and between them keep the desktop and its root menu
 within reach. A new window, or one back from an icon, becomes the main
 window.
@@ -197,6 +197,7 @@ Mwm*fontList:                  Sans:bold:size=10
 | `rootBackground` | desktop colour (global only) |
 | `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
 | `tiling` | `true`: start in tiling mode (global only) |
+| `tileMainWidth` | share of the width for the main tiled window, `10` to `90` (`%` optional), default `55` (global only) |
 | `DoNotTile` | programs that always float in tiling mode, comma-separated (global only) |
 | `TileOnly` | the only programs that tile, comma-separated; the later of the two wins (global only) |
 
@@ -218,4 +219,5 @@ The environment overrides the global entries:
 | `MWM_FONT`        | `Sans:bold:size=10` | fontconfig pattern                |
 | `MWM_MOVE_OPAQUE` | `0`                 | `1`: opaque move/resize           |
 | `MWM_TILING`      | `0`                 | `1`: start in tiling mode         |
+| `MWM_TILE_MAIN_WIDTH` | `55`            | main tiled window's share in %    |
 | `MWM_TERMINAL`    | first of xterm, uxterm, x-terminal-emulator, … | "New Window" |

@@ -16,6 +16,9 @@
  * covers the first monitor. "Raise/Lower Tiled Windows" in the root
  * menu puts the layout above or below the floating windows.
  *
+ * The main window's share of the width is Mwm*tileMainWidth (or
+ * MWM_TILE_MAIN_WIDTH), 55 % by default.
+ *
  * Super+T or "Tile Windows" in the root menu switches it; Mwm*tiling:
  * true in mwmrc (or MWM_TILING=1) turns it on from the start, and a
  * restart keeps the current choice.
@@ -26,7 +29,29 @@
 #include "mwm.h"
 
 #define TILE_GAP 8         /* px around and between windows */
-#define TILE_MAIN_PCT 55   /* share of the width for the main window */
+#define TILE_MAIN_PCT 55   /* default share of the width for the main
+                            * window; Mwm*tileMainWidth changes it */
+#define TILE_MAIN_MIN 10
+#define TILE_MAIN_MAX 90
+
+static int main_pct = TILE_MAIN_PCT;
+
+/* "60" or "60%" within the limits, else -1; name is for the log. */
+static int parse_pct(const char *name, const char *s)
+{
+	if (!s || !*s)
+		return -1;
+	char *end;
+	long v = strtol(s, &end, 10);
+	if (*end == '%')
+		end++;
+	if (end == s || *end || v < TILE_MAIN_MIN || v > TILE_MAIN_MAX) {
+		wm_log("ignoring %s value %s, not a percentage from %d to %d",
+			name, s, TILE_MAIN_MIN, TILE_MAIN_MAX);
+		return -1;
+	}
+	return (int)v;
+}
 
 /* Normal top-level windows that may be resized; nofit ones (their
  * minimum size does not fit their cell) float for this round. */
@@ -78,6 +103,13 @@ void tile_init(void)
 		wm.tiling = v;
 	else
 		wm.tiling = config_bool("tiling", config_get("tiling")) == 1;
+
+	/* The environment over mwmrc, as for the other settings. */
+	if ((v = parse_pct("MWM_TILE_MAIN_WIDTH",
+			getenv("MWM_TILE_MAIN_WIDTH"))) > 0 ||
+			(v = parse_pct("tileMainWidth",
+			config_get("tileMainWidth"))) > 0)
+		main_pct = v;
 }
 
 /* On restart: the mode for the next mwm. */
@@ -189,7 +221,7 @@ static struct client *plan(struct client **v, int n, bool *overflow)
 			a.w - 2 * TILE_GAP, h };
 	} else {
 		int inner = a.w - 3 * TILE_GAP;
-		int mw = inner * TILE_MAIN_PCT / 100, sw = inner - mw;
+		int mw = inner * main_pct / 100, sw = inner - mw;
 		v[0]->tile = (struct rect){ a.x + 2 * TILE_GAP + sw, top,
 			mw, h };
 		if (!layout_stack(v + 1, n - 1, a, a.x + TILE_GAP, sw)) {
