@@ -71,7 +71,8 @@ windows.
 
 `tests/docker/run.sh` builds mwm in Docker and walks through tiling under
 Xvfb with xterm and xdotool (`filter` covers DoNotTile/TileOnly and raising
-or lowering the tiled windows, `width` the main window's width), logging window geometry and taking
+or lowering the tiled windows, `width` the main window's width, `rootbg`
+the desktop colour including `none`), logging window geometry and taking
 screenshots into `tests/docker/out/`.
 
 ## Mouse
