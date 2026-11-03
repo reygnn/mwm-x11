@@ -205,8 +205,9 @@ A program with its own `activeBackground` keeps its colour when unfocused,
 in a paler shade (mixed with the global `background`), and so does its
 desktop icon. Set `Mwm*Name*background` to choose the unfocused colour
 yourself. Colours are anything `XParseColor` accepts: `#rrggbb`, names like
-`gold` or `firebrick`, `rgb:rr/gg/bb`. Lines starting with `!` or `#` are
-comments, and later lines win. The file is read at startup and on
+`gold` or `firebrick`, `rgb:rr/gg/bb`. Lines starting with `!` are
+comments; a `!` after a value is part of the value, so comments go on
+their own line. Later lines win. The file is read at startup and on
 "Restart..." in the root menu.
 
 The environment overrides the global entries:

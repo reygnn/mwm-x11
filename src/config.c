@@ -12,8 +12,9 @@
  *
  * The client part matches the WM_CLASS instance or class name (see
  * `xprop WM_CLASS`), ignoring case. Values are anything XParseColor takes:
- * #rrggbb, colour names, rgb:rr/gg/bb. Lines starting with ! or # are
- * comments; later lines win.
+ * #rrggbb, colour names, rgb:rr/gg/bb. Lines starting with ! are
+ * comments, as in X resource files; there are no comments after a
+ * value. Later lines win.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
@@ -126,7 +127,7 @@ void config_load(void)
 	while (getline(&buf, &cap, f) != -1) {
 		line++;
 		char *s = trim(buf);
-		if (!*s || *s == '!' || *s == '#')
+		if (!*s || *s == '!')
 			continue;
 		char *colon = strchr(s, ':');
 		if (!colon) {
