@@ -263,8 +263,10 @@ static void setup(bool replace)
 	input_init();
 	ewmh_init();
 
-	XSetWindowBackground(wm.dpy, wm.root, theme.root);
-	XClearWindow(wm.dpy, wm.root);
+	if (!theme.root_none) {
+		XSetWindowBackground(wm.dpy, wm.root, theme.root);
+		XClearWindow(wm.dpy, wm.root);
+	}
 	XDefineCursor(wm.dpy, wm.root, wm.cursor[CUR_DEFAULT]);
 	XSetInputFocus(wm.dpy, wm.check, RevertToPointerRoot, CurrentTime);
 }

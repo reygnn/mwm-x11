@@ -138,6 +138,7 @@ struct theme {
 	int64_t active_fg, inactive_fg;
 	XftColor dim;          /* insensitive menu entries */
 	unsigned long root;    /* desktop background */
+	bool root_none;        /* rootBackground: none, leave the root alone */
 	XftFont *font;
 	int border;            /* resize border width */
 	int title_height;

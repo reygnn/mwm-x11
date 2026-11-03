@@ -198,7 +198,7 @@ Mwm*fontList:                  Sans:bold:size=10
 | `background` | frame colour while unfocused (globally: also menus and icons) |
 | `activeForeground`, `foreground` | title text; default is black or white, whichever contrasts |
 | `fontList` | fontconfig pattern for titles and menus (global only) |
-| `rootBackground` | desktop colour (global only) |
+| `rootBackground` | desktop colour, or `none` to leave the desktop to a wallpaper tool such as `xwallpaper` (global only) |
 | `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
 | `tiling` | `true`: start in tiling mode (global only) |
 | `tileMainWidth` | share of the width for the main tiled window, `10` to `90` (`%` optional), default `55` (global only) |
@@ -220,7 +220,7 @@ The environment overrides the global entries:
 |-------------------|---------------------|-----------------------------------|
 | `MWM_ACTIVE`      | `#7387ad`           | focused frame colour              |
 | `MWM_INACTIVE`    | `#aeb2c3`           | other frames, menus, icons        |
-| `MWM_ROOT`        | `#5b7792`           | desktop colour                    |
+| `MWM_ROOT`        | `#5b7792`           | desktop colour, `none`: untouched |
 | `MWM_FONT`        | `Sans:bold:size=10` | fontconfig pattern                |
 | `MWM_MOVE_OPAQUE` | `0`                 | `1`: opaque move/resize           |
 | `MWM_TILING`      | `0`                 | `1`: start in tiling mode         |

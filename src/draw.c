@@ -6,23 +6,36 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "mwm.h"
 
 struct theme theme;
 
-/* Environment first, then mwmrc, then the built-in default. */
+/* Environment first, then mwmrc, then the built-in default. With a
+ * non-NULL none, the value "none" is accepted as well: *none is set and
+ * the fallback returned. */
 static uint32_t setting_color(const char *env, const char *resource,
-	uint32_t fallback)
+	uint32_t fallback, bool *none)
 {
 	uint32_t rgb;
 	const char *s = getenv(env);
+	if (none)
+		*none = false;
 	if (s && *s) {
+		if (none && strcasecmp(s, "none") == 0) {
+			*none = true;
+			return fallback;
+		}
 		if (config_color(s, &rgb))
 			return rgb;
 		wm_log("ignoring %s=%s, not a colour", env, s);
 	}
 	s = config_get(resource);
 	if (s) {
+		if (none && strcasecmp(s, "none") == 0) {
+			*none = true;
+			return fallback;
+		}
 		if (config_color(s, &rgb))
 			return rgb;
 		wm_log("ignoring Mwm*%s: %s, not a colour", resource, s);
@@ -115,10 +128,13 @@ void theme_init(void)
 	 * set in mwmrc or overridden through the environment, e.g.
 	 * MWM_ACTIVE=#b24d7a. Title text picks black or white unless set. */
 	uint32_t inactive = setting_color("MWM_INACTIVE", "background",
-		0xaeb2c3);
+		0xaeb2c3, NULL);
 	uint32_t active = setting_color("MWM_ACTIVE", "activeBackground",
-		0x7387ad);
-	uint32_t root = setting_color("MWM_ROOT", "rootBackground", 0x5b7792);
+		0x7387ad, NULL);
+	/* "none" leaves the desktop to a wallpaper tool (xwallpaper, feh);
+	 * the colour is then only used inside the default icon image. */
+	uint32_t root = setting_color("MWM_ROOT", "rootBackground", 0x5b7792,
+		&theme.root_none);
 	uint32_t fg;
 
 	theme.inactive_fg = config_color(config_get("foreground"), &fg) ?
