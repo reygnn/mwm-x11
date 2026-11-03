@@ -237,6 +237,15 @@ void menu_open_root(int x, int y)
 	add(m, wm.tiling ? "Untile Windows" : "Tile Windows",
 		wm.tiling ? 't' : 'T', "Super+T",
 		ACT_TOGGLE_TILING, true);
+	if (wm.tiling) {
+		int top = client_tiled_stacking();
+		if (top == 1)
+			add(m, "Lower Tiled Windows", 'L', NULL,
+				ACT_LOWER_TILED, true);
+		else
+			add(m, "Raise Tiled Windows", 'a', NULL,
+				ACT_RAISE_TILED, top == 0);
+	}
 	add(m, NULL, 0, NULL, ACT_NONE, false);
 	add(m, "Restart...", 'R', NULL, ACT_RESTART_CONFIRM, true);
 	add(m, "Quit...", 'Q', NULL, ACT_QUIT_CONFIRM, true);
@@ -504,6 +513,10 @@ void run_action(enum action action, struct client *c)
 		break;
 	case ACT_TOGGLE_TILING:
 		tile_toggle();
+		break;
+	case ACT_RAISE_TILED:
+	case ACT_LOWER_TILED:
+		client_stack_tiled(action == ACT_RAISE_TILED);
 		break;
 	case ACT_SNAP_LEFT:
 	case ACT_SNAP_RIGHT:

@@ -70,7 +70,8 @@ windows.
 ## Tests
 
 `tests/docker/run.sh` builds mwm in Docker and walks through tiling under
-Xvfb with xterm and xdotool, logging window geometry and taking
+Xvfb with xterm and xdotool (`filter` covers DoNotTile/TileOnly and raising
+or lowering the tiled windows), logging window geometry and taking
 screenshots into `tests/docker/out/`.
 
 ## Mouse
@@ -137,7 +138,23 @@ are shaded, and when even that is not enough the oldest become icons. The layout
 ends above the row of icons. Dialogs, windows that cannot be resized, windows too large
 for their place, fullscreen and minimized windows float as usual; a
 window that leaves fullscreen joins the layout. The layout covers the
-primary monitor. Switching tiling off puts every window back where it
+primary monitor.
+
+`Mwm*DoNotTile` in mwmrc keeps the listed programs out of the layout:
+they float above or between the tiled windows. `Mwm*TileOnly` is the
+reverse: only the listed programs tile. Programs go by `WM_CLASS`
+(instance or class name, ignoring case), separated by commas. When both
+are set, the later line wins; an empty value switches the filter off.
+
+```
+Mwm*TileOnly:  XTerm, mfm
+```
+
+While tiling is on, the root menu offers "Raise Tiled Windows" when a
+floating window lies on top, and "Lower Tiled Windows" otherwise: all
+tiled windows (with their dialogs) go above or below all floating ones,
+each group keeping its own order, and the focus follows to the group on
+top. Switching tiling off puts every window back where it
 was. `Mwm*tiling: true` in mwmrc or `MWM_TILING=1` starts with tiling on,
 and a restart keeps the current choice.
 
@@ -180,6 +197,8 @@ Mwm*fontList:                  Sans:bold:size=10
 | `rootBackground` | desktop colour (global only) |
 | `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
 | `tiling` | `true`: start in tiling mode (global only) |
+| `DoNotTile` | programs that always float in tiling mode, comma-separated (global only) |
+| `TileOnly` | the only programs that tile, comma-separated; the later of the two wins (global only) |
 
 A program with its own `activeBackground` keeps its colour when unfocused,
 in a paler shade (mixed with the global `background`), and so does its

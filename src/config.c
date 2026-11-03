@@ -7,6 +7,8 @@
  *   Mwm*fontList:                  Sans:bold:size=10
  *   Mwm*XTerm*activeBackground:    #8a0303    per client, by WM_CLASS
  *   Mwm*firefox*activeBackground:  gold
+ *   Mwm*DoNotTile:                 Gimp, mpv      these float in tiling mode
+ *   Mwm*TileOnly:                  XTerm, mfm     only these tile
  *
  * The client part matches the WM_CLASS instance or class name (see
  * `xprop WM_CLASS`), ignoring case. Values are anything XParseColor takes:
@@ -35,6 +37,11 @@ struct rule {
 static struct rule *rules;
 static int n_rules;
 static char path[4096];
+
+/* DoNotTile or TileOnly, whichever comes last, with its programs. */
+static enum { FILTER_NONE, FILTER_DENY, FILTER_ONLY } tile_filter;
+static char **tile_names;
+static int n_tile_names;
 
 static char *trim(char *s)
 {
@@ -66,6 +73,37 @@ static void add_rule(char *key, char *value, int line)
 		.value = xstrdup(value),
 		.line = line,
 	};
+}
+
+/* The last global DoNotTile or TileOnly line decides, and an empty
+ * one switches the filter off again. Programs are separated by commas;
+ * WM_CLASS names may contain spaces. */
+static void load_tile_filter(void)
+{
+	const struct rule *r = NULL;
+	for (int i = 0; i < n_rules; i++) {
+		if (!rules[i].client &&
+				(!strcasecmp(rules[i].resource, "DoNotTile") ||
+				!strcasecmp(rules[i].resource, "TileOnly")))
+			r = &rules[i];
+	}
+	if (!r)
+		return;
+	char *list = xstrdup(r->value);
+	for (char *tok = strtok(list, ","); tok; tok = strtok(NULL, ",")) {
+		char *name = trim(tok);
+		if (!*name)
+			continue;
+		tile_names = xrealloc(tile_names,
+			sizeof(*tile_names) * (n_tile_names + 1));
+		tile_names[n_tile_names++] = xstrdup(name);
+	}
+	free(list);
+	if (n_tile_names)
+		tile_filter = strcasecmp(r->resource, "TileOnly") ?
+			FILTER_DENY : FILTER_ONLY;
+	wm_debug("%s:%d: %s with %d programs", path, r->line, r->resource,
+		n_tile_names);
 }
 
 void config_load(void)
@@ -101,6 +139,7 @@ void config_load(void)
 	free(buf);
 	fclose(f);
 	wm_debug("%s: %d rules", path, n_rules);
+	load_tile_filter();
 }
 
 /* Global value of a resource, NULL when unset. */
@@ -209,4 +248,27 @@ void config_client_shades(struct client *c)
 		c->inactive_shade = shade_get(ibg, has_ifg ? (int64_t)ifg :
 			theme.inactive_fg);
 	}
+}
+
+/* Whether the tiling layout may take c, from its WM_CLASS and the
+ * DoNotTile or TileOnly list. */
+void config_client_tiling(struct client *c)
+{
+	c->no_tile = false;
+	if (tile_filter == FILTER_NONE)
+		return;
+	XClassHint ch = { 0 };
+	bool listed = false;
+	if (XGetClassHint(wm.dpy, c->win, &ch)) {
+		for (int i = 0; i < n_tile_names && !listed; i++)
+			listed = (ch.res_name &&
+				!strcasecmp(tile_names[i], ch.res_name)) ||
+				(ch.res_class &&
+				!strcasecmp(tile_names[i], ch.res_class));
+		if (ch.res_name)
+			XFree(ch.res_name);
+		if (ch.res_class)
+			XFree(ch.res_class);
+	}
+	c->no_tile = tile_filter == FILTER_DENY ? listed : !listed;
 }

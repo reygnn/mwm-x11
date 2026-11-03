@@ -309,6 +309,7 @@ struct client {
 	bool shaded;     /* in the stack, rolled up to its title bar */
 	bool tile_back;  /* fullscreen from the layout: back into it after */
 	bool tile_nofit; /* this round: too big for its cell, floats */
+	bool no_tile;    /* DoNotTile or not in TileOnly: always floats */
 	long tile_seq;   /* layout order, lowest first (the main window) */
 	struct rect tile; /* its cell, frame coordinates */
 
@@ -355,6 +356,8 @@ enum action {
 	ACT_SNAP_UP,
 	ACT_SNAP_DOWN,
 	ACT_TOGGLE_TILING,
+	ACT_RAISE_TILED,
+	ACT_LOWER_TILED,
 	ACT_EDGE_LEFT,
 	ACT_EDGE_RIGHT,
 	ACT_EDGE_UP,
@@ -525,6 +528,8 @@ void client_configure_request(XConfigureRequestEvent *e);
 void client_property_notify(XPropertyEvent *e);
 void client_set_wm_state(struct client *c, long state);
 void restack(void);
+int client_tiled_stacking(void);
+void client_stack_tiled(bool raise);
 void monitors_update(void);
 struct rect monitor_rect_at(int x, int y);
 struct rect monitor_usable_at(int x, int y);
@@ -537,6 +542,7 @@ const char *config_get(const char *resource);
 bool config_color(const char *value, uint32_t *rgb);
 int config_bool(const char *name, const char *value);
 void config_client_shades(struct client *c);
+void config_client_tiling(struct client *c);
 
 /* ---- ewmh.c ------------------------------------------------------------- */
 

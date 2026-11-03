@@ -11,8 +11,10 @@
  * A new window, or one back from an icon, becomes the main window.
  *
  * Only normal top-level windows take part. Dialogs, windows of a fixed
- * size, fullscreen and minimized windows float as before. The layout
- * covers the first monitor.
+ * size, fullscreen and minimized windows float as before, and so do
+ * programs left out by Mwm*DoNotTile or Mwm*TileOnly. The layout
+ * covers the first monitor. "Raise/Lower Tiled Windows" in the root
+ * menu puts the layout above or below the floating windows.
  *
  * Super+T or "Tile Windows" in the root menu switches it; Mwm*tiling:
  * true in mwmrc (or MWM_TILING=1) turns it on from the start, and a
@@ -32,7 +34,7 @@ static bool tileable(struct client *c)
 {
 	return c->type == WT_NORMAL && !c->minimized && !c->fullscreen &&
 		!c->fixed && (c->base_funcs & FUNC_RESIZE) &&
-		!transient_parent(c) && !c->tile_nofit;
+		!transient_parent(c) && !c->tile_nofit && !c->no_tile;
 }
 
 /* Layout order; ties (possible right after a restart) by management

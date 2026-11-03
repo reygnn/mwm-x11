@@ -911,6 +911,63 @@ void restack(void)
 	free(order);
 }
 
+static bool focusable(struct client *c);
+
+/* A tiled window or one of its dialogs: what goes up or down with the
+ * layout. */
+static bool in_layout(struct client *c)
+{
+	return transient_root(c)->tiled;
+}
+
+/* 1 when the topmost visible window of the normal layer belongs to the
+ * layout, 0 when it floats; -1 when there are not both kinds, so there
+ * is nothing to put the layout above or below. */
+int client_tiled_stacking(void)
+{
+	int top = -1;
+	bool tiled = false, floating = false;
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *c = wm.clients[i];
+		if (c->minimized || client_layer(c) != LAYER_NORMAL)
+			continue;
+		bool t = in_layout(c);
+		if (top < 0)
+			top = t;
+		tiled |= t;
+		floating |= !t;
+	}
+	return tiled && floating ? top : -1;
+}
+
+/* All tiled windows (with their dialogs) above or below all floating
+ * ones; each side keeps its own order. Layers still apply, so a panel
+ * stays on top. The focus moves to the side that is now on top. */
+void client_stack_tiled(bool raise)
+{
+	struct client **v = xmalloc(sizeof(*v) * (wm.n_clients + 1));
+	int n = 0;
+	for (int pass = 0; pass < 2; pass++) {
+		bool first = pass == 0;
+		for (int i = 0; i < wm.n_clients; i++)
+			if (in_layout(wm.clients[i]) == (first == raise))
+				v[n++] = wm.clients[i];
+	}
+	memcpy(wm.clients, v, sizeof(*v) * n);
+	free(v);
+	restack();
+	if (wm.focus && in_layout(wm.focus) == raise)
+		return;
+	/* A shaded window only gets the focus when asked for by name. */
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *c = wm.clients[i];
+		if (in_layout(c) == raise && focusable(c) && !tile_shaded(c)) {
+			client_focus(c);
+			return;
+		}
+	}
+}
+
 void client_raise(struct client *c)
 {
 	list_remove(c);
@@ -1333,14 +1390,16 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 		if (n >= HANDOVER_LEN) {
 			c->tile_seq = v[9];
 			wm.tile_front = MIN(wm.tile_front, v[9]);
-			if ((v[10] & HANDOVER_TILED) && wm.tiling) {
+			if ((v[10] & HANDOVER_TILED) && wm.tiling &&
+					!c->no_tile) {
 				c->tile_back = true;
 				c->shaded = !c->fullscreen &&
 					(v[10] & HANDOVER_SHADED);
 			} else if ((v[10] & HANDOVER_TILED) &&
 					!c->fullscreen) {
-				/* A new mwm without tiling: back to where
-				 * it floated. */
+				/* A new mwm without tiling, or one whose
+				 * mwmrc leaves it out: back to where it
+				 * floated. */
 				client_apply_state(c);
 			}
 		}
@@ -1366,6 +1425,7 @@ void client_manage(Window w, bool startup)
 	client_update_title(c);
 	client_update_icon_name(c);
 	config_client_shades(c);
+	config_client_tiling(c);
 	client_update_size_hints(c);
 	client_update_wm_hints(c);
 	client_update_protocols(c);
@@ -1723,10 +1783,14 @@ void client_property_notify(XPropertyEvent *e)
 		if (c->minimized && c->icon_win)
 			icon_render(c);
 	} else if (a == XA_WM_CLASS) {
+		bool no_tile = c->no_tile;
 		config_client_shades(c);
+		config_client_tiling(c);
 		frame_render(c);
 		if (c->minimized && c->icon_win)
 			icon_render(c);
+		if (no_tile != c->no_tile && wm.tiling)
+			tile_arrange();
 	} else if (a == atoms[NET_WM_ICON]) {
 		if (c->minimized && c->icon_win)
 			icon_render(c);
