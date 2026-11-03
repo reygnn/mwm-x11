@@ -147,7 +147,11 @@ reverse: only the listed programs tile. Programs go by `WM_CLASS`
 are set, the later line wins; an empty value switches the filter off.
 
 ```
-Mwm*TileOnly:  XTerm, mfm
+! Firefox floats (WM_CLASS "Navigator", "firefox")
+Mwm*DoNotTile:   Navigator
+
+! or the other way round: only these tile
+Mwm*TileOnly:    XTerm, mfm
 ```
 
 While tiling is on, the root menu offers "Raise Tiled Windows" when a

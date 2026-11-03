@@ -7,7 +7,7 @@
  *   Mwm*fontList:                  Sans:bold:size=10
  *   Mwm*XTerm*activeBackground:    #8a0303    per client, by WM_CLASS
  *   Mwm*firefox*activeBackground:  gold
- *   Mwm*DoNotTile:                 Gimp, mpv      these float in tiling mode
+ *   Mwm*DoNotTile:                 Navigator      Firefox floats in tiling mode
  *   Mwm*TileOnly:                  XTerm, mfm     only these tile
  *
  * The client part matches the WM_CLASS instance or class name (see
