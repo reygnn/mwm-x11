@@ -79,7 +79,7 @@ screenshots into `tests/docker/out/`.
 and minimizing, states changing during a drag, rolling up in the stack,
 autostart, keys during a grab and changing monitors. Xvfb has one monitor,
 so a small `LD_PRELOAD` shim (`tests/docker/monitors.c`) answers
-`XRRGetMonitors` for those.
+`XRRGetMonitors` for those. `tabs` does the same for tab groups.
 
 ## Mouse
 
@@ -89,7 +89,7 @@ so a small `LD_PRELOAD` shim (`tests/docker/monitors.c`) answers
 | Menu button        | click: window menu · double-click: close            |
 | Border / corners   | resize                                              |
 | Icon               | double-click: restore · btn3: window menu           |
-| Desktop            | btn1/btn3: root menu                                |
+| Desktop            | btn1/btn3: root menu · btn2: `Mwm*runDialog`, if set |
 | Alt + btn1/2/3     | move / lower / resize anywhere in the window        |
 
 ## Moving and resizing
@@ -169,6 +169,35 @@ top. Switching tiling off puts every window back where it
 was. `Mwm*tiling: true` in mwmrc or `MWM_TILING=1` starts with tiling on,
 and a restart keeps the current choice.
 
+## Tabs
+
+Several windows can share one frame and one place on the screen, with
+their titles as tabs in the title bar. The shown tab is sunken, and each of
+the others keeps its own unfocused colour, so it stays recognisable.
+
+| Key or gesture | Action |
+|---|---|
+| Super+G | Join the window that had the focus before this one |
+| Super+Shift+G | Take the shown tab out, as a window of its own |
+| Super+Tab, Super+Shift+Tab | Next or previous tab |
+| Super+1 to Super+9 | The n-th tab |
+| Click, wheel | Show a tab |
+| Drag | Move the whole group |
+| Middle drag, or Ctrl+left drag | Take just that window: dropped on another window it joins it, on the desktop it goes there on its own |
+| Middle click | Lower |
+
+A window taken out gets its own size back, as does the last one left. The
+window menu offers the same. A group takes one cell in the tiling layout
+and leaves one icon when minimized, and everything else also treats it as
+one window: Alt+Tab counts it once, and maximized, snapped and tiled carry
+over from tab to tab. A dialog of a hidden tab brings that tab to the front,
+and a restart keeps the groups.
+
+Normal windows with a title bar from mwm can be tabs. Windows of a fixed
+size, dialogs and programs drawing their own title bar can't. In the layout,
+windows can't be dragged, so grouping works through the keys and the menu
+there. Hidden programs count as iconified while they are hidden.
+
 ## Keys (mwm defaults)
 
 Alt+Tab / Alt+Shift+Tab (or Alt+Esc) cycle · Alt+Space or Shift+Esc window menu ·
@@ -177,7 +206,8 @@ Alt+F9 minimize · Alt+F10 maximize · Alt+F11 fullscreen ·
 Ctrl+Alt+Return / Super+Return terminal · Ctrl+Alt+Backspace quit ·
 Super+arrows snap (see above) · Super+Shift+arrows push a floating window
 against that edge of the work area (two in a row: a corner) ·
-Super+T tiling on/off.
+Super+T tiling on/off · Super+G and more for tabs (see above) ·
+Super+Esc `Mwm*screenSaver`, if set.
 
 During a keyboard move or resize, the arrow keys nudge the window (Shift
 for 1 px steps), Return confirms and Escape cancels.

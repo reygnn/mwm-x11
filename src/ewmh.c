@@ -205,7 +205,8 @@ void ewmh_update_client_list(void)
 	struct client **sorted = xmalloc(sizeof(*sorted) *
 		(wm.n_clients + 1));
 	Window *wins = xmalloc(sizeof(*wins) * (wm.n_clients + 1));
-	memcpy(sorted, wm.clients, sizeof(*sorted) * wm.n_clients);
+	if (wm.n_clients) /* no list at all before the first window */
+		memcpy(sorted, wm.clients, sizeof(*sorted) * wm.n_clients);
 	qsort(sorted, wm.n_clients, sizeof(*sorted), by_serial);
 	for (int i = 0; i < wm.n_clients; i++)
 		wins[i] = sorted[i]->win;
@@ -268,7 +269,7 @@ void ewmh_set_state(struct client *c)
 		s[n++] = atoms[NET_WM_STATE_SKIP_TASKBAR];
 	if (c->skip_pager)
 		s[n++] = atoms[NET_WM_STATE_SKIP_PAGER];
-	if (c->minimized)
+	if (c->minimized || c->tab_hidden)
 		s[n++] = atoms[NET_WM_STATE_HIDDEN];
 	if (c->fullscreen)
 		s[n++] = atoms[NET_WM_STATE_FULLSCREEN];
@@ -363,6 +364,8 @@ static void change_state(struct client *c, long action, Atom p1, Atom p2)
 {
 	if (action < STATE_REMOVE || action > STATE_TOGGLE)
 		return; /* malformed */
+	if (c->tab_hidden)
+		return; /* a hidden tab has no state until it is shown */
 	Atom props[2] = { p1, p2 };
 	bool maxed_v = c->maxed_v, maxed_h = c->maxed_h;
 	bool restack_needed = false;
@@ -474,7 +477,7 @@ static void wm_moveresize(struct client *c, XClientMessageEvent *e)
 		run_action(ACT_SIZE, c);
 		return;
 	}
-	if (direction < 0 || direction > MR_MOVE || c->fullscreen)
+	if (direction < 0 || direction > MR_MOVE || c->fullscreen || c->tab_hidden)
 		return;
 
 	/* The toolkit released its pointer grab after the button press; only
@@ -568,7 +571,7 @@ void ewmh_client_message(XClientMessageEvent *e)
 		/* ICCCM 4.1.4: iconify request */
 		if (e->data.l[0] == IconicState)
 			client_minimize(c);
-	} else if (type == atoms[GTK_SHOW_WINDOW_MENU]) {
+	} else if (type == atoms[GTK_SHOW_WINDOW_MENU] && !c->tab_hidden) {
 		menu_open_window(c, e->data.l[1], e->data.l[2]);
 	}
 }

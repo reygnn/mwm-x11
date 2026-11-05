@@ -303,6 +303,7 @@ static void scan(void)
 	}
 	if (kids)
 		XFree(kids);
+	tabs_restore_groups();
 	client_focus_next(NULL);
 }
 
@@ -337,7 +338,7 @@ static void map_request(XMapRequestEvent *e)
 	struct client *c = client_find_win(e->window);
 	if (!c)
 		client_manage(e->window, false);
-	else if (c->minimized)
+	else if (c->minimized || c->tab_hidden)
 		client_activate(c); /* ICCCM: map from Iconic means Normal */
 }
 
@@ -348,7 +349,7 @@ static void unmap_notify(XUnmapEvent *e)
 		return;
 	if (e->send_event) {
 		/* ICCCM 4.1.4: synthetic unmap withdraws an iconic window. */
-		if (c->minimized)
+		if (c->minimized || c->tab_hidden)
 			client_unmanage(c, false);
 		return;
 	}
@@ -395,7 +396,7 @@ static void focus_in(XFocusChangeEvent *e)
 		return;
 	/* A client took the focus itself (globally active input model). */
 	struct client *c = client_find_win(e->window);
-	if (c && c != wm.focus && !c->minimized)
+	if (c && c != wm.focus && !c->minimized && !c->tab_hidden)
 		client_set_active(c);
 }
 
@@ -502,6 +503,8 @@ screen_changed: {
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
+		if (c->tab_hidden)
+			continue; /* it takes the shown one's place when shown */
 		if (c->tiled) {
 			/* Laid out anew below; where it floats once tiling
 			 * is off must still be on a monitor. */

@@ -105,7 +105,18 @@ void snap_preview(enum snap s, int px, int py)
 		return;
 	}
 
-	struct rect r = snap_rect(s, monitor_usable_at(px, py));
+	snap_preview_box(snap_rect(s, monitor_usable_at(px, py)));
+}
+
+/* The same ring around any box: where a window taken along would join. */
+void snap_preview_box(struct rect r)
+{
+	if (have_shape < 0) {
+		int ev, err;
+		have_shape = XShapeQueryExtension(wm.dpy, &ev, &err);
+	}
+	if (!have_shape)
+		return;
 	const int t = PREVIEW_W;
 	if (!preview) {
 		XSetWindowAttributes a = {

@@ -13,8 +13,10 @@
 
 #define PING_TIMEOUT_MS 3000
 /* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h,
- * then tile_seq and the tiling flags, then the point its state fills. */
-#define HANDOVER_LEN 13
+ * then tile_seq and the tiling flags, then the point its state fills, then
+ * its tab group, its place there, whether it is hidden and its own size. */
+#define HANDOVER_LEN 18
+#define HANDOVER_FIT_LEN 13
 #define HANDOVER_TILE_LEN 11
 #define HANDOVER_BASE_LEN 9
 #define HANDOVER_TILED  1
@@ -94,7 +96,7 @@ struct client *transient_parent(struct client *c)
 #define MAX_TRANSIENT_DEPTH 8
 
 /* Whether c is a dialog of ancestor, directly or through other dialogs. */
-static bool is_transient_of(struct client *c, struct client *ancestor)
+bool client_is_transient_of(struct client *c, struct client *ancestor)
 {
 	struct client *p = c;
 	for (int d = 0; d < MAX_TRANSIENT_DEPTH; d++) {
@@ -699,6 +701,12 @@ static void apply_state_geometry_at(struct client *c, int cx, int cy)
 	client_configure(c);
 }
 
+/* Its state again, on the monitor that state fills. */
+void client_refit(struct client *c)
+{
+	apply_state_geometry_at(c, c->fit_x, c->fit_y);
+}
+
 void client_apply_state(struct client *c)
 {
 	int cx, cy;
@@ -740,7 +748,8 @@ void client_set_maximized(struct client *c, bool v, bool h)
 {
 	if (c->tiled)
 		return; /* the layout decides; see tile_promote */
-	if (v == c->maxed_v && h == c->maxed_h && c->snap == SNAP_NONE)
+	if (c->tab_hidden ||
+			(v == c->maxed_v && h == c->maxed_h && c->snap == SNAP_NONE))
 		return;
 	grab_give_way(c);
 	save_free_axes(c);
@@ -756,7 +765,7 @@ void client_set_maximized(struct client *c, bool v, bool h)
  * (px, py); SNAP_NONE goes back to the geometry from before. */
 void client_snap(struct client *c, enum snap s, int px, int py)
 {
-	if (c->fullscreen || c->tiled)
+	if (c->fullscreen || c->tiled || c->tab_hidden)
 		return;
 	if (s == SNAP_NONE) {
 		if (c->snap == SNAP_NONE && !c->maxed_v && !c->maxed_h)
@@ -812,7 +821,7 @@ void client_move_to_edge(struct client *c, enum action dir)
 
 void client_set_fullscreen(struct client *c, bool fs)
 {
-	if (c->fullscreen == fs)
+	if (c->fullscreen == fs || c->tab_hidden)
 		return;
 	grab_give_way(c);
 	/* A tiled window leaves the layout for fullscreen and goes back
@@ -957,7 +966,8 @@ int client_tiled_stacking(void)
 	bool tiled = false, floating = false;
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *c = wm.clients[i];
-		if (c->minimized || client_layer(c) != LAYER_NORMAL)
+		if (c->minimized || c->tab_hidden ||
+				client_layer(c) != LAYER_NORMAL)
 			continue;
 		bool t = in_layout(c);
 		if (top < 0)
@@ -1004,7 +1014,7 @@ void client_raise(struct client *c)
 	struct client **kids = xmalloc(sizeof(*kids) * wm.n_clients);
 	int n = 0;
 	for (int i = wm.n_clients - 1; i >= 0; i--) {
-		if (is_transient_of(wm.clients[i], c))
+		if (client_is_transient_of(wm.clients[i], c))
 			kids[n++] = wm.clients[i];
 	}
 	for (int i = 0; i < n; i++) {
@@ -1028,6 +1038,38 @@ static bool has_successor(struct client *c)
 	return false;
 }
 
+/* c goes where another one is in the stacking order. */
+void client_take_stack_place(struct client *c, struct client *of)
+{
+	list_remove(c);
+	int i = 0;
+	while (i < wm.n_clients && wm.clients[i] != of)
+		i++;
+	list_insert(c, i);
+}
+
+/* The window at a root position, by what is on the screen: during an outline
+ * drag the grabbed one is still where the drag began. */
+struct client *client_at(int x, int y)
+{
+	for (int layer = LAYER_COUNT - 1; layer >= 0; layer--) {
+		for (int i = 0; i < wm.n_clients; i++) {
+			struct client *c = wm.clients[i];
+			if (c->minimized || c->tab_hidden ||
+					(int)client_layer(c) != layer)
+				continue;
+			struct rect b = client_box(c);
+			if (wm.grab_outline && c == wm.grabbed)
+				b = (struct rect){ wm.grab_orig.x, wm.grab_orig.y,
+					wm.grab_orig.w + frame_extra_w(c),
+					wm.grab_orig.h + frame_extra_h(c) };
+			if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)
+				return c;
+		}
+	}
+	return NULL;
+}
+
 void client_lower(struct client *c)
 {
 	list_remove(c);
@@ -1041,7 +1083,7 @@ void client_lower(struct client *c)
 
 static bool focusable(struct client *c)
 {
-	return !c->minimized && c->type != WT_DOCK &&
+	return !c->minimized && !c->tab_hidden && c->type != WT_DOCK &&
 		c->type != WT_DESKTOP && c->type != WT_NOTIFICATION;
 }
 
@@ -1114,6 +1156,10 @@ void client_focus(struct client *c)
 /* What a click on a window does: show it, raise it, focus it. */
 void client_activate(struct client *c)
 {
+	/* A hidden tab, or a dialog of one, is shown first. */
+	struct client *root = transient_root(c);
+	if (root->tab_hidden)
+		tabs_bring(root);
 	if (c->minimized)
 		client_restore(c);
 	client_raise(c);
@@ -1253,6 +1299,8 @@ static void hide(struct client *c)
 	 * of a window that is gone from the screen ends here as well. */
 	if (wm.grabbed == c) {
 		wm.grab_zone = SNAP_NONE;
+		wm.grab_take = NULL;
+		wm.grab_tab = -1;
 		end_grab();
 	}
 	client_expect_unmap(c);
@@ -1272,16 +1320,52 @@ static void show(struct client *c)
 	ewmh_set_state(c);
 }
 
+void client_tab_hide(struct client *c)
+{
+	c->tab_hidden = true;
+	client_expect_unmap(c);
+	XUnmapWindow(wm.dpy, c->win);
+	XUnmapWindow(wm.dpy, c->frame);
+	client_set_wm_state(c, IconicState);
+	ewmh_set_state(c);
+}
+
+void client_tab_show(struct client *c)
+{
+	c->tab_hidden = false;
+	XMapWindow(wm.dpy, c->win);
+	XMapWindow(wm.dpy, c->frame);
+	client_set_wm_state(c, NormalState);
+	ewmh_set_state(c);
+}
+
+/* Dialogs go and come with their tab, as with an icon. Going: those on the
+ * screen. Coming: those that went. */
+void client_dialogs_show(struct client *c, bool on)
+{
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *t = wm.clients[i];
+		if (!client_is_transient_of(t, c))
+			continue;
+		if (on && t->hidden_with_parent) {
+			show(t);
+		} else if (!on && !t->minimized) {
+			hide(t);
+			t->hidden_with_parent = true;
+		}
+	}
+}
+
 void client_minimize(struct client *c)
 {
-	if (c->minimized)
+	if (c->minimized || c->tab_hidden)
 		return;
 	bool had_focus = wm.focus == c;
 	hide(c);
 	/* Dialogs go away with the window they belong to, without icons. */
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *t = wm.clients[i];
-		if (is_transient_of(t, c) && !t->minimized) {
+		if (client_is_transient_of(t, c) && !t->minimized) {
 			had_focus |= wm.focus == t;
 			hide(t);
 			t->hidden_with_parent = true;
@@ -1315,7 +1399,7 @@ static void deiconify(struct client *c)
 	show(c);
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *t = wm.clients[i];
-		if (is_transient_of(t, c) && t->hidden_with_parent)
+		if (client_is_transient_of(t, c) && t->hidden_with_parent)
 			show(t);
 	}
 	if (c->has_strut)
@@ -1328,6 +1412,11 @@ static void deiconify(struct client *c)
 /* mwm's f.normalize: back from an icon, fullscreen or maximized state. */
 void client_restore(struct client *c)
 {
+	struct client *root = transient_root(c);
+	if (root->tab_hidden) {
+		tabs_bring(root);
+		return;
+	}
 	if (c->minimized) {
 		/* A dialog hidden with a window it belongs to comes back with
 		 * that one: the nearest one up the chain that was minimized
@@ -1347,6 +1436,7 @@ void client_restore(struct client *c)
 		deiconify(c);
 		client_raise(c);
 		client_focus(c);
+		tabs_after_restore(c);
 	} else if (c->shaded) {
 		tile_unshade(c);
 	} else if (c->fullscreen) {
@@ -1360,7 +1450,7 @@ void client_restore(struct client *c)
 
 /* Cascade new windows from the top-left of the monitor under the pointer,
  * centring them once the cascade would run off the screen. */
-static void place(struct client *c)
+void client_place(struct client *c)
 {
 	Window rw, cw;
 	int px = 0, py = 0, wx, wy;
@@ -1445,9 +1535,16 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 		}
 		/* Its place in the layout; saved already is its floating
 		 * geometry, so it goes back in without saving again. */
-		if (n >= HANDOVER_LEN) {
+		if (n >= HANDOVER_FIT_LEN) {
 			c->fit_x = (int)v[11];
 			c->fit_y = (int)v[12];
+		}
+		if (n >= HANDOVER_LEN && v[13]) {
+			c->handover_group = v[13];
+			c->handover_index = v[14];
+			c->tab_hidden = v[15] != 0;
+			c->tab_own_w = (int)v[16];
+			c->tab_own_h = (int)v[17];
 		}
 		if (n >= HANDOVER_TILE_LEN) {
 			c->tile_seq = v[9];
@@ -1529,7 +1626,7 @@ void client_manage(Window w, bool startup)
 			&mask);
 		center_in(c, monitor_usable_at(px, py));
 	} else {
-		place(c);
+		client_place(c);
 	}
 	if (!positioned || !startup)
 		if (c->type != WT_DOCK && c->type != WT_DESKTOP)
@@ -1598,7 +1695,18 @@ void client_manage(Window w, bool startup)
 	if (startup)
 		iconic = get_wm_state(w) == IconicState;
 
-	if (parent && parent->minimized) {
+	/* A prompt must not stay out of sight in a hidden tab, unless the group
+	 * is an icon: then it waits, as any dialog of an icon does. */
+	struct client *root = transient_root(c);
+	if (!startup && root != c && root->tab_hidden && root->group &&
+			!root->group->shown->minimized)
+		tabs_bring(root);
+	if (c->tab_hidden) {
+		/* Handed over by a restart as a hidden tab. */
+		client_tab_hide(c);
+		if (wa.map_state == IsUnmapped)
+			c->ignore_unmap--;
+	} else if (parent && (parent->minimized || parent->tab_hidden)) {
 		/* A dialog of a window that is an icon waits for it. */
 		hide(c);
 		c->hidden_with_parent = true;
@@ -1627,6 +1735,9 @@ void client_manage(Window w, bool startup)
 
 static void release(struct client *c, bool destroyed, bool keep_iconic)
 {
+	/* What it was being taken along by is over, with no one to take. */
+	if (wm.grab_take == c)
+		cancel_grab();
 	if (wm.grabbed == c) {
 		if (!destroyed && wm.grab_outline) {
 			/* Mid wireframe drag the window has not moved yet: it
@@ -1636,6 +1747,8 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 			/* Gone: no outline geometry to apply any more. */
 			wm.grab_zone = SNAP_NONE;
 			wm.grab_deferred = false;
+			wm.grab_take = NULL;
+			wm.grab_tab = -1;
 			end_grab();
 		}
 	}
@@ -1669,13 +1782,16 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 				(c->shaded && !c->auto_shaded ?
 				HANDOVER_SHADED : 0),
 				c->fit_x, c->fit_y,
+				c->group ? (long)c->group->key : 0,
+				tabs_index(c), c->tab_hidden,
+				c->tab_own_w, c->tab_own_h,
 			};
 			XChangeProperty(wm.dpy, c->win, atoms[MWM_HANDOVER],
 				XA_CARDINAL, 32, PropModeReplace,
 				(unsigned char *)v, HANDOVER_LEN);
 		}
 		XRemoveFromSaveSet(wm.dpy, c->win);
-		if (keep_iconic && c->minimized) {
+		if (keep_iconic && (c->minimized || c->tab_hidden)) {
 			client_set_wm_state(c, IconicState);
 		} else if (keep_iconic) {
 			client_set_wm_state(c, NormalState);
@@ -1702,13 +1818,14 @@ void client_unmanage(struct client *c, bool destroyed)
 	bool had_strut = c->has_strut;
 	/* By id: nothing below may leave a pointer behind. */
 	Window parent_win = c->transient_for;
-	if (had_focus)
+	tabs_client_gone(c);
+	if (wm.focus == c)
 		wm.focus = NULL;
 	/* Dialogs hidden along with this window would be unreachable now,
 	 * without an icon of their own: bring them back. */
 	for (int i = 0; i < wm.n_clients; i++) {
 		struct client *t = wm.clients[i];
-		if (t->hidden_with_parent && is_transient_of(t, c))
+		if (t->hidden_with_parent && client_is_transient_of(t, c))
 			show(t);
 	}
 	release(c, destroyed, false);
@@ -1719,7 +1836,8 @@ void client_unmanage(struct client *c, bool destroyed)
 	restack();
 	icons_arrange();
 	tile_arrange();
-	if (had_focus) {
+	/* A group gone on to its next tab has the focus there already. */
+	if (had_focus && !wm.focus) {
 		/* A closed dialog hands the focus to the window it belongs to,
 		 * whatever lies on top. */
 		struct client *p = client_find_win(parent_win);
@@ -1739,9 +1857,9 @@ void client_release_all(void)
 	bool handover = wm.restart || wm.replaced;
 	while (wm.n_clients) {
 		struct client *c = wm.clients[wm.n_clients - 1];
-		if (c->minimized && !handover) {
+		if ((c->minimized || c->tab_hidden) && !handover) {
 			XMapWindow(wm.dpy, c->win);
-			c->minimized = false;
+			c->minimized = c->tab_hidden = false;
 		}
 		if (!handover) {
 			XDeleteProperty(wm.dpy, c->win, atoms[NET_WM_STATE]);
@@ -1766,7 +1884,7 @@ static void recheck_hidden_dialog(struct client *c)
 		p = transient_parent(p);
 		if (!p || p == c)
 			break;
-		if (p->minimized)
+		if (p->minimized || p->tab_hidden)
 			return;
 	}
 	show(c);
@@ -1790,6 +1908,7 @@ void client_redecorate(struct client *c)
 	ewmh_set_frame_extents(c);
 	ewmh_set_allowed_actions(c);
 	tile_arrange(); /* fixed size or type may have changed */
+	tabs_client_changed(c);
 }
 
 void client_configure_request(XConfigureRequestEvent *e)
@@ -1810,7 +1929,7 @@ void client_configure_request(XConfigureRequestEvent *e)
 		c->old_bw = e->border_width; /* restored on unmanage */
 
 	/* Fullscreen, snapped and tiled windows keep their place. */
-	if (!c->fullscreen && c->snap == SNAP_NONE && !c->tiled &&
+	if (!c->fullscreen && c->snap == SNAP_NONE && !c->tiled && !c->tab_hidden &&
 			(e->value_mask & (CWX | CWY | CWWidth | CWHeight))) {
 		int w = (e->value_mask & CWWidth) ? e->width : c->w;
 		int h = (e->value_mask & CWHeight) ? e->height : c->h;
@@ -1843,7 +1962,7 @@ void client_configure_request(XConfigureRequestEvent *e)
 		client_send_configure(c);
 	}
 
-	if (e->value_mask & CWStackMode) {
+	if ((e->value_mask & CWStackMode) && !c->tab_hidden) {
 		struct client *sib = (e->value_mask & CWSibling) ?
 			client_find_win(e->above) : NULL;
 		if (sib && sib != c && (e->detail == Above ||

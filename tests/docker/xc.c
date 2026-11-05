@@ -1,6 +1,7 @@
 /*
  * Test helper for review.sh:
  *   xc win TITLE [--geo WxH+X+Y] [--transient ID] [--minh N] [--usertime0]
+ *                [--fixed]
  *                                 a window that closes on WM_DELETE_WINDOW
  *   xc state ID add|remove ATOM   send _NET_WM_STATE, as a client would
  *   xc grabbed                    "yes" if the keyboard is grabbed
@@ -17,7 +18,7 @@
 
 static int win(Display *d, int argc, char **argv)
 {
-	int w = 300, h = 200, x = 50, y = 50, minh = 0, usertime0 = 0;
+	int w = 300, h = 200, x = 50, y = 50, minh = 0, usertime0 = 0, fixed = 0;
 	Window transient = None;
 	for (int i = 3; i < argc; i++) {
 		if (!strcmp(argv[i], "--geo") && i + 1 < argc)
@@ -28,6 +29,8 @@ static int win(Display *d, int argc, char **argv)
 			minh = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--usertime0"))
 			usertime0 = 1;
+		else if (!strcmp(argv[i], "--fixed"))
+			fixed = 1;
 	}
 	Window win = XCreateSimpleWindow(d, DefaultRootWindow(d), x, y, w, h, 0,
 		0, 0xdddddd);
@@ -39,6 +42,11 @@ static int win(Display *d, int argc, char **argv)
 		sh.flags = PMinSize;
 		sh.min_width = 50;
 		sh.min_height = minh;
+	}
+	if (fixed) {
+		sh.flags = PMinSize | PMaxSize;
+		sh.min_width = sh.max_width = w;
+		sh.min_height = sh.max_height = h;
 	}
 	XSetWMNormalHints(d, win, &sh);
 	if (transient)

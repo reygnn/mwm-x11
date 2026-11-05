@@ -97,6 +97,97 @@ static void title_layout(struct client *c, struct title_layout *tl)
 	tl->title_w = right - left;
 }
 
+/* ---- tabs --------------------------------------------------------------- */
+
+struct tab_strip {
+	int x, w;       /* where the first drawn tab starts, the width of each */
+	int first, fit; /* the tabs drawn */
+	int arrow;      /* width of the marks for those that aren't, or 0 */
+};
+
+/* Evenly over the title's area. When they don't all fit at a useful width,
+ * as many as do, moved along so that the shown one is among them. */
+static void tab_strip_layout(struct client *c, const struct title_layout *tl,
+	struct tab_strip *st)
+{
+	struct tab_group *g = c->group;
+	const int n = g->n, min = 3 * theme.title_height;
+	*st = (struct tab_strip){ .x = tl->title_x, .fit = n };
+	if (n * min > tl->title_w) {
+		st->arrow = theme.title_height / 2;
+		st->x += st->arrow;
+		st->fit = MAX((tl->title_w - 2 * st->arrow) / min, 1);
+		int shown = tabs_index(g->shown);
+		if (g->first_visible > shown)
+			g->first_visible = shown;
+		if (g->first_visible + st->fit <= shown)
+			g->first_visible = shown - st->fit + 1;
+		if (g->first_visible > n - st->fit)
+			g->first_visible = n - st->fit;
+		st->first = g->first_visible;
+	}
+	st->w = MAX((tl->title_w - 2 * st->arrow) / st->fit, 1);
+}
+
+int frame_tab_at(struct client *c, int fx)
+{
+	if (!c->group)
+		return -1;
+	struct title_layout tl;
+	title_layout(c, &tl);
+	struct tab_strip st;
+	tab_strip_layout(c, &tl, &st);
+	if (fx < st.x || fx >= st.x + st.fit * st.w)
+		return -1;
+	return st.first + (fx - st.x) / st.w;
+}
+
+/* A small triangle, pointing left or right. */
+static void draw_mark(struct canvas *cv, int x, int y, int size, bool left,
+	unsigned long pixel)
+{
+	for (int i = 0; i < size; i++) {
+		int h = 2 * (size - i) - 1;
+		/* Tallest at its base, down to the tip. */
+		fill_rect(cv, pixel, left ? x + size - 1 - i : x + i, y + i, 1, h);
+	}
+}
+
+/* The shown one sunken, in the colours of the frame. The others raised, each
+ * in its own unfocused colours, so a window stays recognisable in a group
+ * of any colour. */
+static void draw_tabs(struct canvas *cv, struct client *c,
+	const struct title_layout *tl, int y, int T, const struct shade *s)
+{
+	struct tab_group *g = c->group;
+	struct tab_strip st;
+	tab_strip_layout(c, tl, &st);
+	draw_bevel(cv, tl->title_x, y, tl->title_w, T, 1, s, false);
+	for (int i = 0; i < g->n; i++) {
+		int slot = i - st.first;
+		if (slot < 0 || slot >= st.fit)
+			continue;
+		struct client *m = g->members[i];
+		bool shown = m == g->shown;
+		const struct shade *ms = shown ? s : m->inactive_shade;
+		int x = st.x + slot * st.w;
+		fill_rect(cv, ms->bg, x, y, st.w, T);
+		draw_bevel(cv, x, y, st.w, T, 1, ms, shown);
+		draw_text(cv, m->title, (XftColor *)&ms->fg, x + 4, y + 1,
+			st.w - 8, T - 2, true);
+	}
+	if (st.arrow) {
+		const int size = MAX(T / 4, 2), ym = y + T / 2 - size;
+		if (st.first > 0)
+			draw_mark(cv, tl->title_x + 1, ym, size, true, s->fg.pixel);
+		if (st.first + st.fit < g->n)
+			draw_mark(cv, tl->title_x + tl->title_w - size - 1, ym,
+				size, false, s->fg.pixel);
+	}
+}
+
+/* ---- the frame ----------------------------------------------------------- */
+
 static void draw_button(struct canvas *cv, struct client *c,
 	enum frame_part part, int x, int y, int size, const struct shade *s)
 {
@@ -138,6 +229,9 @@ static void corner_reach(int B, int W, int H, int *kx, int *ky)
 
 void frame_render(struct client *c)
 {
+	/* A hidden tab has no frame to show, but is drawn in the shown one's. */
+	if (c->tab_hidden && c->group)
+		c = c->group->shown;
 	const int B = frame_border(c), T = frame_title(c);
 	if (!B && !T)
 		return; /* the client covers the whole frame */
@@ -185,10 +279,14 @@ void frame_render(struct client *c)
 		title_layout(c, &tl);
 		if (tl.menu_x >= 0)
 			draw_button(&cv, c, PART_MENU_BUTTON, tl.menu_x, B, T, s);
-		draw_bevel(&cv, tl.title_x, B, tl.title_w, T, 1, s,
-			c->pressed == PART_TITLE);
-		draw_text(&cv, c->title, (XftColor *)&s->fg, tl.title_x + 4,
-			B + 1, tl.title_w - 8, T - 2, true);
+		if (c->group) {
+			draw_tabs(&cv, c, &tl, B, T, s);
+		} else {
+			draw_bevel(&cv, tl.title_x, B, tl.title_w, T, 1, s,
+				c->pressed == PART_TITLE);
+			draw_text(&cv, c->title, (XftColor *)&s->fg,
+				tl.title_x + 4, B + 1, tl.title_w - 8, T - 2, true);
+		}
 		if (tl.min_x >= 0)
 			draw_button(&cv, c, PART_MINIMIZE_BUTTON, tl.min_x, B,
 				T, s);
@@ -219,7 +317,7 @@ enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges)
 			return PART_MAXIMIZE_BUTTON;
 		if (tl.min_x >= 0 && fx >= tl.min_x && fx < tl.min_x + T)
 			return PART_MINIMIZE_BUTTON;
-		return PART_TITLE;
+		return c->group ? PART_TAB : PART_TITLE;
 	}
 	/* Thin borders and maximized windows only move. */
 	if (B != theme.border || !(c->funcs & FUNC_RESIZE) ||

@@ -174,6 +174,19 @@ static void open_at(int x, int y)
 	wm.grab = GRAB_MENU;
 }
 
+static void add_tabs(struct menu *m, struct client *c)
+{
+	bool group = c->group && !c->minimized;
+	add(m, "Tab With Previous Window", 'T', "Super+G", ACT_TAB_JOIN,
+		!c->minimized && tabs_previous(c));
+	add(m, "Next Tab", 'e', "Super+Tab", ACT_TAB_NEXT,
+		group && !c->fullscreen);
+	add(m, "Previous Tab", 'P', "Super+Shift+Tab", ACT_TAB_PREVIOUS,
+		group && !c->fullscreen);
+	add(m, "Detach Tab", 'D', "Super+Shift+G", ACT_TAB_DETACH, group);
+	add(m, NULL, 0, NULL, ACT_NONE, false);
+}
+
 void menu_open_window(struct client *c, int x, int y)
 {
 	struct menu *m = &wm.menu;
@@ -203,6 +216,7 @@ void menu_open_window(struct client *c, int x, int y)
 			(f & FUNC_MAXIMIZE) && !main);
 		add(m, "Lower", 'L', "Alt+F3", ACT_LOWER, true);
 		add(m, NULL, 0, NULL, ACT_NONE, false);
+		add_tabs(m, c);
 		add(m, "Close", 'C', "Alt+F4", ACT_CLOSE, f & FUNC_CLOSE);
 		open_at(x, y);
 		return;
@@ -218,6 +232,7 @@ void menu_open_window(struct client *c, int x, int y)
 		!c->fullscreen);
 	add(m, "Lower", 'L', "Alt+F3", ACT_LOWER, true);
 	add(m, NULL, 0, NULL, ACT_NONE, false);
+	add_tabs(m, c);
 	add(m, "Close", 'C', "Alt+F4", ACT_CLOSE, f & FUNC_CLOSE);
 	open_at(x, y);
 }
@@ -426,6 +441,11 @@ void run_action(enum action action, struct client *c)
 {
 	int px, py;
 
+	if (action >= ACT_TAB_1 && action <= ACT_TAB_9) {
+		if (c)
+			tabs_show_nth(c, action - ACT_TAB_1);
+		return;
+	}
 	switch (action) {
 	case ACT_NONE:
 	case ACT_RESTART_CONFIRM:
@@ -531,6 +551,29 @@ void run_action(enum action action, struct client *c)
 	case ACT_EDGE_DOWN:
 		if (c)
 			client_move_to_edge(c, action);
+		break;
+	case ACT_TAB_JOIN:
+		if (c && tabs_previous(c))
+			tabs_join(c, tabs_previous(c));
+		break;
+	case ACT_TAB_DETACH:
+		if (c)
+			tabs_detach(c);
+		break;
+	case ACT_TAB_NEXT:
+	case ACT_TAB_PREVIOUS:
+		if (c)
+			tabs_step(c, action == ACT_TAB_NEXT);
+		break;
+	case ACT_TAB_1: /* handled above */
+	case ACT_TAB_2:
+	case ACT_TAB_3:
+	case ACT_TAB_4:
+	case ACT_TAB_5:
+	case ACT_TAB_6:
+	case ACT_TAB_7:
+	case ACT_TAB_8:
+	case ACT_TAB_9:
 		break;
 	case ACT_RESTART:
 		wm.restart = true;

@@ -57,7 +57,8 @@ static int parse_pct(const char *name, const char *s)
  * minimum size does not fit their cell) float for this round. */
 static bool tileable(struct client *c)
 {
-	return c->type == WT_NORMAL && !c->minimized && !c->fullscreen &&
+	return c->type == WT_NORMAL && !c->minimized && !c->tab_hidden &&
+		!c->fullscreen &&
 		!c->fixed && (c->base_funcs & FUNC_RESIZE) &&
 		!transient_parent(c) && !c->tile_nofit && !c->no_tile;
 }

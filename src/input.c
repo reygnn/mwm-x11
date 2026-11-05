@@ -50,6 +50,19 @@ static const struct key keys[] = {
 	{ Mod4Mask | ShiftMask, XK_Right, ACT_EDGE_RIGHT },
 	{ Mod4Mask | ShiftMask, XK_Up, ACT_EDGE_UP },
 	{ Mod4Mask | ShiftMask, XK_Down, ACT_EDGE_DOWN },
+	{ Mod4Mask, XK_g, ACT_TAB_JOIN },
+	{ Mod4Mask | ShiftMask, XK_g, ACT_TAB_DETACH },
+	{ Mod4Mask, XK_Tab, ACT_TAB_NEXT },
+	{ Mod4Mask | ShiftMask, XK_Tab, ACT_TAB_PREVIOUS },
+	{ Mod4Mask, XK_1, ACT_TAB_1 },
+	{ Mod4Mask, XK_2, ACT_TAB_2 },
+	{ Mod4Mask, XK_3, ACT_TAB_3 },
+	{ Mod4Mask, XK_4, ACT_TAB_4 },
+	{ Mod4Mask, XK_5, ACT_TAB_5 },
+	{ Mod4Mask, XK_6, ACT_TAB_6 },
+	{ Mod4Mask, XK_7, ACT_TAB_7 },
+	{ Mod4Mask, XK_8, ACT_TAB_8 },
+	{ Mod4Mask, XK_9, ACT_TAB_9 },
 };
 
 static void spawn_argv(const char *const argv[])
@@ -219,6 +232,8 @@ bool begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	wm.grab_box = client_box(c);
 	wm.grab_outline = outline_wanted();
 	wm.grab_deferred = false;
+	wm.grab_tab = -1;
+	wm.grab_take = wm.grab_drop = NULL;
 	/* From the menu or keyboard there is no press to drag from yet;
 	 * show where the window is. A drag shows it on the first motion. */
 	if (wm.grab_outline && until_click)
@@ -233,6 +248,33 @@ bool begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	}
 	update_feedback();
 	return true;
+}
+
+/* A press on a title or tab that turned out to be a click or a drag of just
+ * that window: onto another window it joins that one, within its own group
+ * nothing happens, and anywhere else it goes there, on its own. */
+static void finish_take(struct client *c, struct client *take, bool moved,
+	int x, int y, unsigned button)
+{
+	if (!moved) {
+		if (button == Button2)
+			client_lower(c);
+		else
+			tabs_show(take);
+		return;
+	}
+	struct client *under = client_at(wm.grab_last_x, wm.grab_last_y);
+	if (under && tabs_fit_together(take, under)) {
+		tabs_join(take, under);
+		return;
+	}
+	if (take->group && under && under->group == take->group)
+		return;
+	if (take->group)
+		tabs_detach(take);
+	else if (take->snap != SNAP_NONE || take->maxed_v || take->maxed_h)
+		client_snap(take, SNAP_NONE, x, y);
+	client_move(take, x, y);
 }
 
 void end_grab(void)
@@ -253,6 +295,20 @@ void end_grab(void)
 	struct client *c = wm.grabbed;
 	enum snap zone = wm.grab == GRAB_MOVE ? wm.grab_zone : SNAP_NONE;
 	bool deferred = wm.grab_outline && wm.grab_deferred;
+	int tab = wm.grab_detached ? -1 : wm.grab_tab;
+	struct client *take = wm.grab_take;
+	bool moved = wm.grab_detached;
+	int take_x = c ? c->x : 0, take_y = c ? c->y : 0;
+	if (take && c) {
+		/* Only the outline went anywhere, at the size take will have. */
+		c->x = wm.grab_orig.x;
+		c->y = wm.grab_orig.y;
+		c->w = wm.grab_orig.w;
+		c->h = wm.grab_orig.h;
+		deferred = false;
+	}
+	wm.grab_tab = -1;
+	wm.grab_take = wm.grab_drop = NULL;
 	wm.grab = GRAB_NONE;
 	wm.grabbed = NULL;
 	wm.grab_zone = SNAP_NONE;
@@ -262,6 +318,17 @@ void end_grab(void)
 	feedback_hide();
 	snap_preview(SNAP_NONE, 0, 0);
 	outline_hide();
+	if (take && c) {
+		finish_take(c, take, moved, take_x, take_y, wm.grab_button);
+		return;
+	}
+	if (tab >= 0 && c) {
+		tabs_show_nth(c, tab);
+		/* The second click of a double click lands on the one now shown. */
+		if (c->group && wm.last_click_client == c)
+			wm.last_click_client = c->group->shown;
+		return;
+	}
 	/* Wireframe: now the window itself goes where the outline was. A
 	 * snap below configures it anyway. */
 	if (c && deferred && zone == SNAP_NONE)
@@ -322,6 +389,8 @@ void cancel_grab(void)
 	client_configure(c);
 	ewmh_set_state(c);
 	wm.grab_zone = SNAP_NONE;
+	wm.grab_tab = -1;
+	wm.grab_take = NULL;
 	end_grab();
 }
 
@@ -347,7 +416,10 @@ static void process_move(int px, int py)
 		if (abs(px - wm.grab_px) < t && abs(py - wm.grab_py) < t)
 			return;
 		wm.grab_detached = true;
-		if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
+		if (wm.grab_take) {
+			/* The outline shows what it will be on its own. */
+			tabs_own_size(wm.grab_take, &c->w, &c->h);
+		} else if (c->snap != SNAP_NONE || c->maxed_v || c->maxed_h) {
 			/* As in Windows: the window comes off at its old size,
 			 * holding on at the same spot of its width. */
 			struct rect b = client_box(c);
@@ -359,6 +431,21 @@ static void process_move(int px, int py)
 		}
 	}
 	client_move(c, px - wm.grab_x, py - wm.grab_y);
+
+	if (wm.grab_take) {
+		struct client *drop = client_at(px, py);
+		if (drop && !tabs_fit_together(wm.grab_take, drop))
+			drop = NULL;
+		if (drop != wm.grab_drop) {
+			wm.grab_drop = drop;
+			if (drop)
+				snap_preview_box(client_box(drop));
+			else
+				snap_preview(SNAP_NONE, 0, 0);
+			outline_raise();
+		}
+		return;
+	}
 
 	/* The same zone on another monitor is another target. */
 	enum snap zone = snap_zone_at(c, px, py);
@@ -487,29 +574,63 @@ static void press_frame(struct client *c, XButtonEvent *e)
 	unsigned edges;
 	enum frame_part part = e->subwindow == c->win ? PART_CLIENT :
 		frame_hit(c, e->x, e->y, &edges);
+	int tab = part == PART_TAB ? frame_tab_at(c, e->x) : -1;
+
+	/* The wheel steps through the tabs, and raises nothing. */
+	if (e->button > Button3) {
+		if (part == PART_TAB && (e->button == Button4 ||
+				e->button == Button5))
+			tabs_step(c, e->button == Button5);
+		return;
+	}
 
 	/* A click on a shaded window unrolls it (activating does), and
 	 * does no more, so its minimize button does not roll it right up
 	 * again; only maximize goes on to make it the main window. */
 	bool was_shaded = tile_shaded(c);
 	client_activate(c);
-	if (was_shaded && part != PART_MAXIMIZE_BUTTON)
+	if (was_shaded && part != PART_MAXIMIZE_BUTTON) {
+		if (tab >= 0)
+			tabs_show_nth(c, tab);
 		return;
+	}
 	switch (part) {
 	case PART_CLIENT:
 	case PART_NONE:
 		return;
+	case PART_TAB:
 	case PART_TITLE:
+		/* The middle button, or Ctrl on a touchpad without one: this
+		 * one window. A click lowers on release, to tell it from a drag. */
+		if (e->button == Button2 || (e->button == Button1 &&
+				(clean_mask(e->state) & ControlMask))) {
+			if ((c->funcs & FUNC_MOVE) && !c->fullscreen &&
+					begin_grab(c, GRAB_MOVE, 0, false,
+					e->x_root, e->y_root)) {
+				struct client *one = tabs_nth(c, tab);
+				wm.grab_take = one ? one : c;
+				wm.grab_button = e->button;
+				wm.grab_outline = true;
+			} else if (e->button == Button2) {
+				client_lower(c);
+			} else if (tab >= 0) {
+				tabs_show_nth(c, tab);
+			}
+			return;
+		}
 		if (e->button == Button3) {
 			menu_open_window(c, e->x_root, e->y_root);
-		} else if (e->button == Button1) {
-			if (is_double_click(c, part, e->time))
-				run_action(ACT_TOGGLE_MAXIMIZE, c);
-			else if ((c->funcs & FUNC_MOVE) && !c->fullscreen)
+		} else if (is_double_click(c, part, e->time)) {
+			run_action(ACT_TOGGLE_MAXIMIZE, c);
+		} else if ((c->funcs & FUNC_MOVE) && !c->fullscreen &&
 				begin_grab(c, GRAB_MOVE, 0, false,
-					e->x_root, e->y_root);
-		} else if (e->button == Button2) {
-			client_lower(c);
+				e->x_root, e->y_root)) {
+			/* A tab is shown on release, unless this becomes a
+			 * drag. Where nothing can be moved, there is no drag
+			 * to wait for. */
+			wm.grab_tab = tab;
+		} else if (tab >= 0) {
+			tabs_show_nth(c, tab);
 		}
 		return;
 	case PART_MENU_BUTTON:

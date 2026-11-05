@@ -190,6 +190,7 @@ enum frame_part {
 	PART_MINIMIZE_BUTTON,
 	PART_MAXIMIZE_BUTTON,
 	PART_RESIZE, /* see resize edges */
+	PART_TAB,    /* the title of a group; see frame_tab_at() */
 };
 
 enum {
@@ -251,6 +252,15 @@ enum layer {
 	LAYER_ABOVE,
 	LAYER_FULLSCREEN,
 	LAYER_COUNT,
+};
+
+/* Windows sharing one place on the screen; see tabs.c. */
+struct tab_group {
+	struct client **members; /* in tab order */
+	int n;
+	struct client *shown;
+	int first_visible;       /* with too many tabs to draw them all */
+	Window key;              /* names the group across a restart */
 };
 
 struct client {
@@ -316,6 +326,12 @@ struct client {
 	long tile_seq;   /* layout order, lowest first (the main window) */
 	struct rect tile; /* its cell, frame coordinates */
 
+	/* Tab groups (tabs.c) */
+	struct tab_group *group; /* NULL when alone */
+	bool tab_hidden;         /* in a group, and not the one shown */
+	int tab_own_w, tab_own_h; /* the size it had before it joined */
+	long handover_group, handover_index; /* until tabs_restore_groups */
+
 	long strut[12]; /* _NET_WM_STRUT_PARTIAL layout */
 	bool has_strut;
 
@@ -365,6 +381,19 @@ enum action {
 	ACT_EDGE_RIGHT,
 	ACT_EDGE_UP,
 	ACT_EDGE_DOWN,
+	ACT_TAB_JOIN,
+	ACT_TAB_DETACH,
+	ACT_TAB_NEXT,
+	ACT_TAB_PREVIOUS,
+	ACT_TAB_1, /* to ACT_TAB_9, one after the other */
+	ACT_TAB_2,
+	ACT_TAB_3,
+	ACT_TAB_4,
+	ACT_TAB_5,
+	ACT_TAB_6,
+	ACT_TAB_7,
+	ACT_TAB_8,
+	ACT_TAB_9,
 };
 
 struct menu_item {
@@ -466,6 +495,9 @@ struct wm {
 	bool grab_orig_max_v, grab_orig_max_h;
 	bool grab_outline;  /* wireframe: the window moves on release */
 	bool grab_deferred; /* geometry changed, not yet applied */
+	int grab_tab;       /* the tab pressed: shown if no drag follows */
+	struct client *grab_take; /* this one window is being taken along */
+	struct client *grab_drop; /* ... and would join this one here */
 
 	/* Double-click detection */
 	Time last_click;
@@ -513,6 +545,14 @@ void client_apply_state(struct client *c);
 void client_set_tiled(struct client *c, bool on, bool apply);
 void client_keep_saved_on_screen(struct client *c);
 void client_move_to_edge(struct client *c, enum action dir);
+void client_refit(struct client *c);
+void client_place(struct client *c);
+void client_take_stack_place(struct client *c, struct client *of);
+void client_tab_hide(struct client *c);
+void client_tab_show(struct client *c);
+void client_dialogs_show(struct client *c, bool show);
+bool client_is_transient_of(struct client *c, struct client *ancestor);
+struct client *client_at(int x, int y);
 struct client *transient_parent(struct client *c);
 void client_cycle(bool backwards);
 void client_grab_buttons(struct client *c, bool focused);
@@ -575,6 +615,8 @@ int frame_extra_h(struct client *c);
 int frame_height(struct client *c);
 void frame_render(struct client *c);
 enum frame_part frame_hit(struct client *c, int fx, int fy, unsigned *edges);
+/* Which tab is at x in the frame: its index, or -1 for none. */
+int frame_tab_at(struct client *c, int fx);
 void icon_render(struct client *c);
 void icons_arrange(void);
 void feedback_show(const char *text);
@@ -588,6 +630,7 @@ struct rect snap_rect(enum snap s, struct rect area);
 const char *snap_name(enum snap s);
 enum snap snap_zone_at(struct client *c, int px, int py);
 void snap_preview(enum snap s, int px, int py);
+void snap_preview_box(struct rect r);
 void snap_step(struct client *c, enum action dir);
 
 /* ---- tile.c ------------------------------------------------------------- */
@@ -607,6 +650,31 @@ static inline bool tile_shaded(struct client *c)
 {
 	return c->shaded && c->tiled && frame_title(c) > 0;
 }
+
+/* ---- tabs.c ------------------------------------------------------------- */
+
+bool tabs_can_join(struct client *c);
+/* Whether one can join the other: not itself, not its own group, and they
+ * agree. */
+bool tabs_fit_together(struct client *c, struct client *target);
+/* The window that had the focus before this one, if it can be joined. */
+struct client *tabs_previous(struct client *c);
+struct client *tabs_nth(struct client *c, int n); /* NULL when there is none */
+/* c takes the target's place, and is shown there, in its group. */
+bool tabs_join(struct client *c, struct client *target);
+void tabs_detach(struct client *c); /* out of its group, on its own */
+void tabs_show(struct client *c);
+/* Shows it whatever the group is doing: an icon or fullscreen comes back. */
+void tabs_bring(struct client *c);
+void tabs_step(struct client *c, bool forward);
+void tabs_show_nth(struct client *c, int n);
+void tabs_client_gone(struct client *c);
+void tabs_client_changed(struct client *c); /* it may not qualify any more */
+void tabs_after_restore(struct client *c);
+int tabs_index(struct client *c); /* -1 when alone */
+/* The size it goes back to on leaving its group, or as it is when alone. */
+void tabs_own_size(struct client *c, int *w, int *h);
+void tabs_restore_groups(void);
 
 /* ---- outline.c ---------------------------------------------------------- */
 
