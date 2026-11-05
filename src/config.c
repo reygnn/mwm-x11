@@ -5,6 +5,9 @@
  *   Mwm*background:                #aeb2c3    other frames, menus, icons
  *   Mwm*activeForeground / foreground         title text (default: auto)
  *   Mwm*fontList:                  Sans:bold:size=10
+ *   Mwm*rootMenuItem:              Files: mfm     in the root menu, repeatable
+ *   Mwm*runDialog:                 dmenu_run      the middle button on the desktop
+ *   Mwm*screenSaver:               xset dpms force off     Super+Esc
  *   Mwm*XTerm*activeBackground:    #8a0303    per client, by WM_CLASS
  *   Mwm*firefox*activeBackground:  gold
  *   Mwm*DoNotTile:                 Navigator      Firefox floats in tiling mode
@@ -43,6 +46,12 @@ static char path[4096];
 static enum { FILTER_NONE, FILTER_DENY, FILTER_ONLY } tile_filter;
 static char **tile_names;
 static int n_tile_names;
+
+/* The programs of Mwm*rootMenuItem; unlike other resources, every line counts. */
+static struct {
+	char *label, *command;
+} root_items[CONFIG_MAX_ROOT_ITEMS];
+static int n_root_items;
 
 static char *trim(char *s)
 {
@@ -107,6 +116,42 @@ static void load_tile_filter(void)
 		n_tile_names);
 }
 
+static void load_root_items(void)
+{
+	for (int i = 0; i < n_rules; i++) {
+		if (rules[i].client || strcasecmp(rules[i].resource, "rootMenuItem"))
+			continue;
+		char *value = xstrdup(rules[i].value);
+		char *colon = strchr(value, ':');
+		char *command = colon ? trim(colon + 1) : NULL;
+		if (colon)
+			*colon = '\0';
+		char *label = trim(value);
+		if (!*label || !command || !*command) {
+			wm_log("%s:%d: expected Mwm*rootMenuItem: label: command",
+				path, rules[i].line);
+		} else if (n_root_items == CONFIG_MAX_ROOT_ITEMS) {
+			wm_log("%s:%d: only the first %d of Mwm*rootMenuItem are used",
+				path, rules[i].line, CONFIG_MAX_ROOT_ITEMS);
+		} else {
+			root_items[n_root_items].label = xstrdup(label);
+			root_items[n_root_items++].command = xstrdup(command);
+		}
+		free(value);
+	}
+}
+
+int config_root_items(void)
+{
+	return n_root_items;
+}
+
+void config_root_item(int i, const char **label, const char **command)
+{
+	*label = root_items[i].label;
+	*command = root_items[i].command;
+}
+
 void config_load(void)
 {
 	const char *cfg = getenv("XDG_CONFIG_HOME");
@@ -141,6 +186,7 @@ void config_load(void)
 	fclose(f);
 	wm_debug("%s: %d rules", path, n_rules);
 	load_tile_filter();
+	load_root_items();
 }
 
 /* Global value of a resource, NULL when unset. */

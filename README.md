@@ -79,7 +79,8 @@ screenshots into `tests/docker/out/`.
 and minimizing, states changing during a drag, rolling up in the stack,
 autostart, keys during a grab and changing monitors. Xvfb has one monitor,
 so a small `LD_PRELOAD` shim (`tests/docker/monitors.c`) answers
-`XRRGetMonitors` for those. `tabs` does the same for tab groups.
+`XRRGetMonitors` for those. `tabs` does the same for tab groups,
+`menu` for programs from mwmrc.
 
 ## Mouse
 
@@ -239,8 +240,23 @@ Mwm*fontList:                  Sans:bold:size=10
 | `moveOpaque` | `true`: drag windows themselves instead of an outline (global only) |
 | `tiling` | `true`: start in tiling mode (global only) |
 | `tileMainWidth` | share of the width for the main tiled window, `10` to `90` (`%` optional), default `55` (global only) |
+| `rootMenuItem` | a program on top of the root menu, as `label: command`; every line counts, up to 20 (global only) |
+| `runDialog` | command for the middle button on the desktop; nothing without it (global only) |
+| `screenSaver` | command for Super+Esc; nothing without it (global only) |
 | `DoNotTile` | programs that always float in tiling mode, comma-separated (global only) |
 | `TileOnly` | the only programs that tile, comma-separated; the later of the two wins (global only) |
+
+```
+! the first letter still free becomes its key in the menu
+Mwm*rootMenuItem:   Firefox: firefox
+Mwm*rootMenuItem:   Notes: xterm -e sh -c "vi ~/notes.txt"
+Mwm*runDialog:      dmenu_run
+Mwm*screenSaver:    xset dpms force off
+```
+
+The label ends at the first colon, and the rest is a shell command. mrun and
+displayOff from mwc's setup are Wayland programs, so these two have no default
+here.
 
 A program with its own `activeBackground` keeps its colour when unfocused,
 in a paler shade (mixed with the global `background`), and so does its

@@ -117,7 +117,7 @@ static void add(struct menu *m, const char *label, char mnemonic,
 	if (m->n_items >= MENU_MAX_ITEMS)
 		return;
 	m->items[m->n_items++] = (struct menu_item){
-		label, mnemonic, accel, action, sensitive,
+		label, mnemonic, accel, action, sensitive, NULL,
 	};
 }
 
@@ -237,6 +237,38 @@ void menu_open_window(struct client *c, int x, int y)
 	open_at(x, y);
 }
 
+/* The first letter of the label that no other entry uses, also of those
+ * still to come below it. */
+static char free_mnemonic(const struct menu *m, const char *label)
+{
+	static const char own[] = "nudftlarq";
+	for (const char *c = label; *c; c++) {
+		if (!isalpha((unsigned char)*c))
+			continue;
+		int lower = tolower((unsigned char)*c);
+		bool taken = strchr(own, lower);
+		for (int i = 0; i < m->n_items && !taken; i++)
+			taken = tolower((unsigned char)m->items[i].mnemonic) == lower;
+		if (!taken)
+			return *c;
+	}
+	return 0;
+}
+
+/* The programs from mwmrc, on top and set off from the rest. */
+static void add_root_items(struct menu *m)
+{
+	int n = config_root_items();
+	for (int i = 0; i < n; i++) {
+		const char *label, *command;
+		config_root_item(i, &label, &command);
+		add(m, label, free_mnemonic(m, label), NULL, ACT_RUN, true);
+		m->items[m->n_items - 1].command = command;
+	}
+	if (n)
+		add(m, NULL, 0, NULL, ACT_NONE, false);
+}
+
 void menu_open_root(int x, int y)
 {
 	struct menu *m = &wm.menu;
@@ -245,6 +277,7 @@ void menu_open_root(int x, int y)
 	m->n_items = 0;
 	m->target = NULL;
 	m->from_button = false;
+	add_root_items(m);
 	add(m, "New Window", 'N', NULL, ACT_NEW_WINDOW, true);
 	add(m, "Shuffle Up", 'U', NULL, ACT_SHUFFLE_UP, true);
 	add(m, "Shuffle Down", 'D', NULL, ACT_SHUFFLE_DOWN, true);
@@ -322,10 +355,13 @@ static void activate(int idx)
 {
 	struct menu *m = &wm.menu;
 	enum action action = m->items[idx].action;
+	const char *command = m->items[idx].command;
 	struct client *target = m->target;
 	int x = m->x, y = m->y;
 	menu_close();
-	if (action == ACT_QUIT_CONFIRM)
+	if (action == ACT_RUN)
+		spawn(command);
+	else if (action == ACT_QUIT_CONFIRM)
 		open_confirm("QUIT Mwm?", ACT_QUIT, x, y);
 	else if (action == ACT_RESTART_CONFIRM)
 		open_confirm("Restart Mwm?", ACT_RESTART, x, y);
@@ -450,6 +486,10 @@ void run_action(enum action action, struct client *c)
 	case ACT_NONE:
 	case ACT_RESTART_CONFIRM:
 	case ACT_QUIT_CONFIRM:
+	case ACT_RUN: /* see activate() */
+		break;
+	case ACT_SCREEN_SAVER:
+		spawn(config_get("screenSaver"));
 		break;
 	case ACT_RESTORE:
 		if (c)

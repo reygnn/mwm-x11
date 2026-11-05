@@ -394,6 +394,8 @@ enum action {
 	ACT_TAB_7,
 	ACT_TAB_8,
 	ACT_TAB_9,
+	ACT_RUN,         /* the command of a menu item */
+	ACT_SCREEN_SAVER,
 };
 
 struct menu_item {
@@ -402,9 +404,11 @@ struct menu_item {
 	const char *accel; /* right-aligned accelerator text */
 	enum action action;
 	bool sensitive;
+	const char *command; /* ACT_RUN */
 };
 
-#define MENU_MAX_ITEMS 16
+/* What the root menu has itself, and CONFIG_MAX_ROOT_ITEMS with a separator. */
+#define MENU_MAX_ITEMS 32
 
 struct menu {
 	Window win;
@@ -583,6 +587,9 @@ struct rect client_box(struct client *c);
 
 void config_load(void);
 const char *config_get(const char *resource);
+#define CONFIG_MAX_ROOT_ITEMS 20
+int config_root_items(void);
+void config_root_item(int i, const char **label, const char **command);
 bool config_color(const char *value, uint32_t *rgb);
 int config_bool(const char *name, const char *value);
 void config_client_shades(struct client *c);

@@ -50,6 +50,7 @@ static const struct key keys[] = {
 	{ Mod4Mask | ShiftMask, XK_Right, ACT_EDGE_RIGHT },
 	{ Mod4Mask | ShiftMask, XK_Up, ACT_EDGE_UP },
 	{ Mod4Mask | ShiftMask, XK_Down, ACT_EDGE_DOWN },
+	{ Mod4Mask, XK_Escape, ACT_SCREEN_SAVER },
 	{ Mod4Mask, XK_g, ACT_TAB_JOIN },
 	{ Mod4Mask | ShiftMask, XK_g, ACT_TAB_DETACH },
 	{ Mod4Mask, XK_Tab, ACT_TAB_NEXT },
@@ -685,10 +686,13 @@ void handle_button_press(XButtonEvent *e)
 	}
 
 	if (e->window == wm.root) {
-		/* Desktop: the root menu, as mwm binds it to buttons 1 and 3 */
+		/* Desktop: the root menu, as mwm binds it to buttons 1 and 3,
+		 * and the run dialog, if there is one. */
 		if (e->subwindow == None &&
 				(e->button == Button1 || e->button == Button3))
 			menu_open_root(e->x_root, e->y_root);
+		else if (e->subwindow == None && e->button == Button2)
+			spawn(config_get("runDialog"));
 		return;
 	}
 
