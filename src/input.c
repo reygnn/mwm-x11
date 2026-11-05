@@ -4,6 +4,7 @@
  * outline.c), and mwm's default key bindings.
  */
 #define _POSIX_C_SOURCE 200809L
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,17 +52,21 @@ static const struct key keys[] = {
 	{ Mod4Mask | ShiftMask, XK_Down, ACT_EDGE_DOWN },
 };
 
-void spawn(const char *cmd)
+static void spawn_argv(const char *const argv[])
 {
-	if (!cmd || !*cmd)
-		return;
 	pid_t pid = fork();
 	if (pid == 0) {
 		/* Double fork so we never collect zombies. */
 		setsid();
 		if (fork() == 0) {
 			close(ConnectionNumber(wm.dpy));
-			execl("/bin/sh", "/bin/sh", "-c", cmd, (char *)NULL);
+			execv(argv[0], (char *const *)argv);
+			/* A script without a #! line, as a shell would run it. */
+			if (errno == ENOEXEC) {
+				const char *sh[] = { "/bin/sh", argv[0], NULL };
+				execv(sh[0], (char *const *)sh);
+			}
+			wm_log("cannot run %s: %s", argv[0], strerror(errno));
 			_exit(127);
 		}
 		_exit(0);
@@ -69,6 +74,21 @@ void spawn(const char *cmd)
 		int status;
 		waitpid(pid, &status, 0);
 	}
+}
+
+void spawn(const char *cmd)
+{
+	if (!cmd || !*cmd)
+		return;
+	const char *argv[] = { "/bin/sh", "-c", cmd, NULL };
+	spawn_argv(argv);
+}
+
+/* A program by its path, which may hold spaces, rather than a command. */
+void spawn_file(const char *path)
+{
+	const char *argv[] = { path, NULL };
+	spawn_argv(argv);
 }
 
 Cursor edge_cursor(unsigned edges)
@@ -163,17 +183,17 @@ static void update_feedback(void)
 	feedback_show(buf);
 }
 
-void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
+bool begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	bool until_click, int px, int py)
 {
 	if (wm.grab != GRAB_NONE)
-		return;
+		return false;
 	Cursor cur = mode == GRAB_MOVE ? wm.cursor[CUR_MOVE] :
 		edge_cursor(edges);
 	if (XGrabPointer(wm.dpy, wm.root, False, ButtonPressMask |
 			ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
 			GrabModeAsync, None, cur, CurrentTime) != GrabSuccess)
-		return;
+		return false;
 	/* Escape cancels, Return confirms, arrows nudge. A drag with a
 	 * button held works without, a move from the menu or keyboard
 	 * does not. */
@@ -181,7 +201,7 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 			GrabModeAsync, CurrentTime) != GrabSuccess &&
 			until_click) {
 		XUngrabPointer(wm.dpy, CurrentTime);
-		return;
+		return false;
 	}
 
 	wm.grab = mode;
@@ -212,6 +232,7 @@ void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 		wm.grab_y = py - ((edges & EDGE_BOTTOM) ? b->y + b->h : b->y);
 	}
 	update_feedback();
+	return true;
 }
 
 void end_grab(void)
@@ -302,6 +323,15 @@ void cancel_grab(void)
 	ewmh_set_state(c);
 	wm.grab_zone = SNAP_NONE;
 	end_grab();
+}
+
+/* c's state is about to change: a move or resize must not overwrite the
+ * geometry that belongs to the new state when it ends. It goes back to
+ * where it started, so saved does not take in an outline position. */
+void grab_give_way(struct client *c)
+{
+	if (wm.grabbed == c && (wm.grab == GRAB_MOVE || wm.grab == GRAB_RESIZE))
+		cancel_grab();
 }
 
 static void process_move(int px, int py)
@@ -712,6 +742,11 @@ void handle_key_press(XKeyEvent *e)
 	KeySym sym = XkbKeycodeToKeysym(wm.dpy, e->keycode, 0, 0);
 	unsigned mods = clean_mask(e->state);
 
+	/* The way out works with a menu open or during a grab as well. */
+	if (sym == XK_BackSpace && mods == (ControlMask | Mod1Mask)) {
+		run_action(ACT_QUIT, NULL);
+		return;
+	}
 	if (wm.grab == GRAB_MENU) {
 		char buf[8];
 		KeySym typed;

@@ -174,6 +174,7 @@ static bool layout_stack(struct client **v, int k, struct rect a, int x,
 					pick = v[i];
 			if (pick) {
 				pick->shaded = true;
+				pick->auto_shaded = true;
 				continue;
 			}
 		}
@@ -214,6 +215,14 @@ static struct client *plan(struct client **v, int n, bool *overflow)
 	}
 	a.h = MAX(bottom - a.y, 2 * TILE_GAP + 1);
 	int top = a.y + TILE_GAP, h = a.h - 2 * TILE_GAP;
+	/* What the layout rolled up for lack of room in an earlier round gets
+	 * another chance: the room may be there now. */
+	for (int i = 0; i < n; i++) {
+		if (v[i]->auto_shaded) {
+			v[i]->shaded = false;
+			v[i]->auto_shaded = false;
+		}
+	}
 	/* The main window is never shaded. */
 	v[0]->shaded = false;
 	if (n == 1) {
@@ -222,6 +231,18 @@ static struct client *plan(struct client **v, int n, bool *overflow)
 	} else {
 		int inner = a.w - 3 * TILE_GAP;
 		int mw = inner * main_pct / 100, sw = inner - mw;
+		/* Those that fit in no cell, before anything gets rolled up for
+		 * them: a window too tall for the whole column could never
+		 * be unrolled. */
+		int fw, fh;
+		min_frame(v[0], &fw, &fh);
+		if (fw > mw || fh > h)
+			return v[0];
+		for (int i = 1; i < n; i++) {
+			min_frame(v[i], &fw, &fh);
+			if (fw > sw || fh > h)
+				return v[i];
+		}
 		v[0]->tile = (struct rect){ a.x + 2 * TILE_GAP + sw, top,
 			mw, h };
 		if (!layout_stack(v + 1, n - 1, a, a.x + TILE_GAP, sw)) {
@@ -315,6 +336,7 @@ void tile_iconify(struct client *c)
 		if (!tile_can_shade(c))
 			return; /* no title bar to roll up to */
 		c->shaded = !c->shaded;
+		c->auto_shaded = false;
 		tile_arrange();
 		/* Nothing to type into any more. */
 		if (c->shaded && wm.focus == c)
@@ -340,6 +362,7 @@ void tile_promote(struct client *c)
 	struct client **v = tiled_windows(&n);
 	if (n > 1) {
 		c->shaded = false;
+		c->auto_shaded = false;
 		swap_seq(v[0], c);
 		tile_arrange();
 		client_focus(c);
@@ -352,5 +375,6 @@ void tile_unshade(struct client *c)
 	if (!c->shaded)
 		return;
 	c->shaded = false;
+	c->auto_shaded = false;
 	tile_arrange();
 }

@@ -13,8 +13,9 @@
 
 #define PING_TIMEOUT_MS 3000
 /* _MWM_HANDOVER: saved x, y, w, h, snap, then the handed-over x, y, w, h,
- * then tile_seq and the tiling flags. */
-#define HANDOVER_LEN 11
+ * then tile_seq and the tiling flags, then the point its state fills. */
+#define HANDOVER_LEN 13
+#define HANDOVER_TILE_LEN 11
 #define HANDOVER_BASE_LEN 9
 #define HANDOVER_TILED  1
 #define HANDOVER_SHADED 2
@@ -641,6 +642,10 @@ void client_move(struct client *c, int x, int y)
  * on the monitor at (cx, cy). */
 static void apply_state_geometry_at(struct client *c, int cx, int cy)
 {
+	if (!c->tiled) {
+		c->fit_x = cx;
+		c->fit_y = cy;
+	}
 	if (c->tiled) {
 		/* Its cell, as far as the size hints allow: the main window
 		 * keeps to the right edge, the stack to the left. A shaded
@@ -737,6 +742,7 @@ void client_set_maximized(struct client *c, bool v, bool h)
 		return; /* the layout decides; see tile_promote */
 	if (v == c->maxed_v && h == c->maxed_h && c->snap == SNAP_NONE)
 		return;
+	grab_give_way(c);
 	save_free_axes(c);
 	c->snap = SNAP_NONE;
 	c->maxed_v = v;
@@ -808,6 +814,7 @@ void client_set_fullscreen(struct client *c, bool fs)
 {
 	if (c->fullscreen == fs)
 		return;
+	grab_give_way(c);
 	/* A tiled window leaves the layout for fullscreen and goes back
 	 * into it afterwards; saved still holds its floating geometry. */
 	if (fs && c->tiled) {
@@ -839,21 +846,42 @@ void client_set_tiled(struct client *c, bool on, bool apply)
 {
 	if (c->tiled == on)
 		return;
+	grab_give_way(c);
 	if (on && !c->tile_back)
 		save_free_axes(c);
 	/* Shading only lives in the layout; one handed over by a restart
 	 * comes back shaded. */
 	c->shaded = on && c->tile_back && c->shaded;
+	c->auto_shaded = false;
 	c->tile_back = false;
 	c->tiled = on;
 	c->tile_main = false;
 	client_update_decorations(c);
 	ewmh_set_allowed_actions(c);
 	ewmh_set_state(c); /* maximized or snapped is kept, not shown */
-	/* Back on the monitor it came from, not the one of its cell. */
-	if (!on && apply)
-		apply_state_geometry_at(c, c->saved.x + c->saved.w / 2,
-			c->saved.y + c->saved.h / 2);
+	/* Back on the monitor it came from, not the one of its cell: where it
+	 * floated, or for a state the monitor that state fills, which saved
+	 * says nothing about after a drop on another monitor. */
+	if (!on && apply) {
+		if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
+				c->maxed_h)
+			apply_state_geometry_at(c, c->fit_x, c->fit_y);
+		else
+			apply_state_geometry_at(c, c->saved.x + c->saved.w / 2,
+				c->saved.y + c->saved.h / 2);
+	}
+}
+
+/* Where c goes back to has to be on a monitor, after they changed. */
+void client_keep_saved_on_screen(struct client *c)
+{
+	struct rect s = c->saved;
+	struct rect m = monitor_usable_at(s.x + s.w / 2, s.y + s.h / 2);
+	if (s.x >= m.x + m.w || s.y >= m.y + m.h || s.x + s.w <= m.x ||
+			s.y + s.h <= m.y) {
+		c->saved.x = m.x + 32;
+		c->saved.y = m.y + 32;
+	}
 }
 
 /* ---- stacking ----------------------------------------------------------- */
@@ -987,12 +1015,25 @@ void client_raise(struct client *c)
 	restack();
 }
 
+/* Whether anything outside c's own family could take the focus. If not it
+ * keeps it, even at the back: it is still the only window to type into. */
+static bool has_successor(struct client *c)
+{
+	for (int i = 0; i < wm.n_clients; i++) {
+		struct client *o = wm.clients[i];
+		if (o != c && focusable(o) && !tile_shaded(o) &&
+				transient_root(o) != transient_root(c))
+			return true;
+	}
+	return false;
+}
+
 void client_lower(struct client *c)
 {
 	list_remove(c);
 	list_insert(c, wm.n_clients);
 	restack();
-	if (c == wm.focus)
+	if (c == wm.focus && has_successor(c))
 		client_focus_next(c);
 }
 
@@ -1116,8 +1157,25 @@ void client_cycle(bool backwards)
 	if (!top)
 		return;
 	if (backwards) {
-		/* Push the current window to the back, focus the next one. */
-		client_lower(top);
+		/* Push the current window to the back, with its dialogs above
+		 * it as they were, and focus the next one. */
+		struct client *root = transient_root(wm.focus ? wm.focus : top);
+		bool had_successor = has_successor(root);
+		struct client **group = xmalloc(sizeof(*group) * wm.n_clients);
+		int n = 0;
+		for (int i = 0; i < wm.n_clients; i++)
+			if (wm.clients[i] != root &&
+					transient_root(wm.clients[i]) == root)
+				group[n++] = wm.clients[i];
+		group[n++] = root;
+		for (int i = 0; i < n; i++) {
+			list_remove(group[i]);
+			list_insert(group[i], wm.n_clients);
+		}
+		free(group);
+		restack();
+		if (had_successor)
+			client_focus_next(root);
 		return;
 	}
 	client_activate(bottom);
@@ -1388,6 +1446,10 @@ static void take_handover(struct client *c, const XWindowAttributes *wa)
 		/* Its place in the layout; saved already is its floating
 		 * geometry, so it goes back in without saving again. */
 		if (n >= HANDOVER_LEN) {
+			c->fit_x = (int)v[11];
+			c->fit_y = (int)v[12];
+		}
+		if (n >= HANDOVER_TILE_LEN) {
 			c->tile_seq = v[9];
 			wm.tile_front = MIN(wm.tile_front, v[9]);
 			if ((v[10] & HANDOVER_TILED) && wm.tiling &&
@@ -1536,7 +1598,13 @@ void client_manage(Window w, bool startup)
 	if (startup)
 		iconic = get_wm_state(w) == IconicState;
 
-	if (iconic) {
+	if (parent && parent->minimized) {
+		/* A dialog of a window that is an icon waits for it. */
+		hide(c);
+		c->hidden_with_parent = true;
+		if (wa.map_state == IsUnmapped)
+			c->ignore_unmap--;
+	} else if (iconic) {
 		client_minimize(c);
 		/* Unmapping a window that is not mapped sends no event. */
 		if (wa.map_state == IsUnmapped)
@@ -1598,7 +1666,9 @@ static void release(struct client *c, bool destroyed, bool keep_iconic)
 				c->saved.x, c->saved.y, c->saved.w, c->saved.h,
 				c->snap, x, y, c->w, c->h, c->tile_seq,
 				(c->tiled || c->tile_back ? HANDOVER_TILED : 0) |
-				(c->shaded ? HANDOVER_SHADED : 0),
+				(c->shaded && !c->auto_shaded ?
+				HANDOVER_SHADED : 0),
+				c->fit_x, c->fit_y,
 			};
 			XChangeProperty(wm.dpy, c->win, atoms[MWM_HANDOVER],
 				XA_CARDINAL, 32, PropModeReplace,
@@ -1630,6 +1700,8 @@ void client_unmanage(struct client *c, bool destroyed)
 	wm_debug("unmanage 0x%lx%s", c->win, destroyed ? " (destroyed)" : "");
 	bool had_focus = wm.focus == c;
 	bool had_strut = c->has_strut;
+	/* By id: nothing below may leave a pointer behind. */
+	Window parent_win = c->transient_for;
 	if (had_focus)
 		wm.focus = NULL;
 	/* Dialogs hidden along with this window would be unreachable now,
@@ -1647,8 +1719,15 @@ void client_unmanage(struct client *c, bool destroyed)
 	restack();
 	icons_arrange();
 	tile_arrange();
-	if (had_focus)
-		client_focus_next(NULL);
+	if (had_focus) {
+		/* A closed dialog hands the focus to the window it belongs to,
+		 * whatever lies on top. */
+		struct client *p = client_find_win(parent_win);
+		if (p && focusable(p) && !tile_shaded(p))
+			client_focus(p);
+		else
+			client_focus_next(NULL);
+	}
 }
 
 /* On exit: hand every window back to the root, mapped, so the session
@@ -1675,6 +1754,23 @@ void client_release_all(void)
 }
 
 /* ---- requests and notifications ----------------------------------------- */
+
+/* A dialog hidden with a window it no longer belongs to comes back: it has
+ * no icon of its own to be reached by. */
+static void recheck_hidden_dialog(struct client *c)
+{
+	if (!c->hidden_with_parent)
+		return;
+	struct client *p = c;
+	for (int d = 0; d < MAX_TRANSIENT_DEPTH; d++) {
+		p = transient_parent(p);
+		if (!p || p == c)
+			break;
+		if (p->minimized)
+			return;
+	}
+	show(c);
+}
 
 void client_redecorate(struct client *c)
 {
@@ -1808,11 +1904,13 @@ void client_property_notify(XPropertyEvent *e)
 		client_update_protocols(c);
 	} else if (a == XA_WM_TRANSIENT_FOR) {
 		client_update_transient(c);
+		recheck_hidden_dialog(c);
 		restack();
 		tile_arrange(); /* dialogs float */
 	} else if (a == atoms[MOTIF_WM_HINTS] ||
 			a == atoms[NET_WM_WINDOW_TYPE]) {
 		client_update_transient(c);
+		recheck_hidden_dialog(c);
 		client_update_type(c);
 		client_update_motif_hints(c);
 		client_redecorate(c);

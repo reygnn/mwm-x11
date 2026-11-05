@@ -75,6 +75,12 @@ or lowering the tiled windows, `width` the main window's width, `rootbg`
 the desktop colour including `none`), logging window geometry and taking
 screenshots into `tests/docker/out/`.
 
+`review` checks its own results, and fails if one is wrong: focus, dialogs
+and minimizing, states changing during a drag, rolling up in the stack,
+autostart, keys during a grab and changing monitors. Xvfb has one monitor,
+so a small `LD_PRELOAD` shim (`tests/docker/monitors.c`) answers
+`XRRGetMonitors` for those.
+
 ## Mouse
 
 | Where              | Action                                              |

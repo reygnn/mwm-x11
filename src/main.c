@@ -484,8 +484,20 @@ static void handle_event(XEvent *ev)
 	}
 	return;
 
-screen_changed:
+screen_changed: {
+	/* Not every RandR event changes the monitors. When they do, a menu
+	 * or grab must not outlive them: it could be left out of sight,
+	 * holding the keyboard. */
+	struct rect old[MAX_MONITORS];
+	int old_n = wm.n_mon;
+	memcpy(old, wm.mon, sizeof(old));
 	monitors_update();
+	if (old_n != wm.n_mon || memcmp(old, wm.mon, sizeof(old))) {
+		menu_close();
+		if (wm.grab == GRAB_MOVE || wm.grab == GRAB_RESIZE)
+			cancel_grab();
+	}
+	}
 	ewmh_update_geometry();
 	ewmh_update_workarea();
 	for (int i = 0; i < wm.n_clients; i++) {
@@ -493,18 +505,13 @@ screen_changed:
 		if (c->tiled) {
 			/* Laid out anew below; where it floats once tiling
 			 * is off must still be on a monitor. */
-			struct rect s = c->saved;
-			struct rect m = monitor_usable_at(s.x + s.w / 2,
-				s.y + s.h / 2);
-			if (s.x >= m.x + m.w || s.y >= m.y + m.h ||
-					s.x + s.w <= m.x || s.y + s.h <= m.y) {
-				c->saved.x = m.x + 32;
-				c->saved.y = m.y + 32;
-			}
+			client_keep_saved_on_screen(c);
 			continue;
 		}
 		if (c->fullscreen || c->snap != SNAP_NONE || c->maxed_v ||
 				c->maxed_h) {
+			/* Where it is says nothing about what it goes back to. */
+			client_keep_saved_on_screen(c);
 			client_apply_state(c);
 		} else {
 			struct rect b = client_box(c);
@@ -605,7 +612,7 @@ static void run_autostart(const char *startup_cmd)
 	else
 		return;
 	if (access(path, X_OK) == 0)
-		spawn(path);
+		spawn_file(path);
 }
 
 static void usage(const char *argv0)

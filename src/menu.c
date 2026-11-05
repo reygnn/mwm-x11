@@ -444,8 +444,9 @@ void run_action(enum action action, struct client *c)
 		 * the window follows it until the next click. */
 		px = c->x + (c->w + frame_extra_w(c)) / 2;
 		py = c->y + frame_border(c) + frame_title(c) / 2;
-		XWarpPointer(wm.dpy, None, wm.root, 0, 0, 0, 0, px, py);
-		begin_grab(c, GRAB_MOVE, 0, true, px, py);
+		/* The pointer only jumps if a grab follows. */
+		if (begin_grab(c, GRAB_MOVE, 0, true, px, py))
+			XWarpPointer(wm.dpy, None, wm.root, 0, 0, 0, 0, px, py);
 		break;
 	case ACT_SIZE:
 		if (!c || !(c->funcs & FUNC_RESIZE) || c->fullscreen)
@@ -454,9 +455,9 @@ void run_action(enum action action, struct client *c)
 			client_restore(c);
 		px = c->x + c->w + frame_extra_w(c) - 1;
 		py = c->y + c->h + frame_extra_h(c) - 1;
-		XWarpPointer(wm.dpy, None, wm.root, 0, 0, 0, 0, px, py);
-		begin_grab(c, GRAB_RESIZE, EDGE_BOTTOM | EDGE_RIGHT, true,
-			px, py);
+		if (begin_grab(c, GRAB_RESIZE, EDGE_BOTTOM | EDGE_RIGHT, true,
+				px, py))
+			XWarpPointer(wm.dpy, None, wm.root, 0, 0, 0, 0, px, py);
 		break;
 	case ACT_MINIMIZE:
 		if (c && c->tiled && (c->funcs & FUNC_MINIMIZE))

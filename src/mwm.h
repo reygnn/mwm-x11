@@ -302,12 +302,14 @@ struct client {
 	enum snap snap; /* halves also set maxed_v, as EWMH sees them */
 	bool above, below, sticky, skip_taskbar, skip_pager, modal;
 	struct rect saved; /* geometry of the unmaximized axes */
+	int fit_x, fit_y;  /* a point on the monitor its state fills */
 
 	/* Tiling mode (tile.c): the window sits in a cell of the layout and
 	 * cannot be moved or resized; saved keeps its floating geometry. */
 	bool tiled;
 	bool tile_main;  /* the main window on the right */
 	bool shaded;     /* in the stack, rolled up to its title bar */
+	bool auto_shaded; /* by the layout for lack of room, not by the user */
 	bool tile_back;  /* fullscreen from the layout: back into it after */
 	bool tile_nofit; /* this round: too big for its cell, floats */
 	bool no_tile;    /* DoNotTile or not in TileOnly: always floats */
@@ -509,6 +511,7 @@ void client_set_fullscreen(struct client *c, bool fs);
 void client_snap(struct client *c, enum snap s, int px, int py);
 void client_apply_state(struct client *c);
 void client_set_tiled(struct client *c, bool on, bool apply);
+void client_keep_saved_on_screen(struct client *c);
 void client_move_to_edge(struct client *c, enum action dir);
 struct client *transient_parent(struct client *c);
 void client_cycle(bool backwards);
@@ -635,11 +638,13 @@ void handle_motion(XMotionEvent *e);
 void handle_key_press(XKeyEvent *e);
 void handle_crossing(XCrossingEvent *e);
 /* px/py: root position of the pointer when the grab was asked for. */
-void begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
+bool begin_grab(struct client *c, enum grab_mode mode, unsigned edges,
 	bool until_click, int px, int py);
 void end_grab(void);
 void cancel_grab(void);
+void grab_give_way(struct client *c);
 void spawn(const char *cmd);
+void spawn_file(const char *path);
 Cursor edge_cursor(unsigned edges);
 
 #endif
